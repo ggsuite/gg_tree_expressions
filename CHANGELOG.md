@@ -12,3 +12,9 @@
 - Reduce version
 - Increase version
 - Adjust changelog
+
+## Unreleased
+
+### Changed
+
+- Publish adjustments
