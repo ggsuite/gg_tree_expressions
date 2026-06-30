@@ -5,3 +5,7 @@
 ### Added
 
 - Initial boilerplate.
+
+### Changed
+
+- Rename template into tree expressions

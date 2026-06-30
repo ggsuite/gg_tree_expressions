@@ -5,9 +5,9 @@
 // found in the LICENSE file in the root of this package.
 
 /// The main class of the package
-class GgTemplateProject {
+class GgTreeExpressions {
   /// Constructor
-  const GgTemplateProject();
+  const GgTreeExpressions();
 
   /// A sample method
   String foo() => 'foo';

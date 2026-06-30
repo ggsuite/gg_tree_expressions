@@ -6,4 +6,4 @@
 
 library;
 
-export 'src/gg_template_project.dart';
+export 'src/gg_tree_expressions.dart';

@@ -1,3 +1,3 @@
-# gg_template_project
+# gg_tree_expressions
 
-The gg_template_project package provides various JSON helpers for dart
+The gg_tree_expressions package provides various JSON helpers for dart
