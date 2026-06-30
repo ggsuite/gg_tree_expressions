@@ -12,9 +12,8 @@
 - Reduce version
 - Increase version
 - Adjust changelog
-
-## Unreleased
-
-### Changed
-
 - Publish adjustments
+
+## [0.0.2] - 2026-06-30
+
+[0.0.2]: https://github.com/ggsuite/gg_tree_expressions/tag/%tag
