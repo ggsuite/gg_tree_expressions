@@ -1,0 +1,14 @@
+name: gg_template_project
+description: The gg_template_project package provides various JSON helpers for dart
+version: 1.0.0
+repository: https://github.com/ggsuite/gg_template_project.git
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+
+dependencies:
+  path: ^1.9.0
+
+dev_dependencies:
+  lints: ^6.0.0
+  test: ^1.25.6
