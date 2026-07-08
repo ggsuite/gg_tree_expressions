@@ -6,4 +6,15 @@
 
 library;
 
-export 'src/gg_tree_expressions.dart';
+export 'src/compiled_expression.dart';
+export 'src/did_you_mean.dart';
+export 'src/resolver.dart';
+export 'src/result_type.dart';
+export 'src/rule.dart';
+export 'src/rule_book.dart';
+export 'src/rule_input.dart';
+export 'src/rule_ref.dart';
+export 'src/rule_variant.dart';
+export 'src/selector.dart';
+export 'src/tree_expressions_exception.dart';
+export 'src/tree_reader.dart';

@@ -1,0 +1,269 @@
+{
+  "comment": [
+    "Cross-language conformance vectors for the CEL subset supported",
+    "by gg_tree_expressions. Reusable from a TS harness driving",
+    "@bufbuild/cel through the same cases. The 'quirks' section pins",
+    "engine behaviors that differ from the CEL spec — if an engine",
+    "upgrade changes them, these vectors fail loudly."
+  ],
+  "evaluate": [
+    { "expression": "1 + 2", "inputs": {}, "expected": 3 },
+    { "expression": "2.5 * 2.0", "inputs": {}, "expected": 5.0 },
+    { "expression": "7 % 3", "inputs": {}, "expected": 1 },
+    { "expression": "10.0 / 4.0", "inputs": {}, "expected": 2.5 },
+    { "expression": "x < 400.0", "inputs": { "x": 300 }, "expected": true },
+    { "expression": "x < 400", "inputs": { "x": 300.5 }, "expected": true },
+    {
+      "expression": "uid == 'abc'",
+      "inputs": { "uid": "abc" },
+      "expected": true
+    },
+    {
+      "expression": "uid == 'abc'",
+      "inputs": { "uid": "def" },
+      "expected": false
+    },
+    {
+      "expression": "a && !b",
+      "inputs": { "a": true, "b": false },
+      "expected": true
+    },
+    {
+      "expression": "a || b",
+      "inputs": { "a": false, "b": true },
+      "expected": true
+    },
+    {
+      "expression": "w < 400.0 ? 3.0 : 2.0",
+      "inputs": { "w": 380.0 },
+      "expected": 3.0
+    },
+    {
+      "expression": "w < 400.0 ? 3.0 : 2.0",
+      "inputs": { "w": 800.0 },
+      "expected": 2.0
+    },
+    {
+      "expression": "a < b ? a : b",
+      "inputs": { "a": 1.0, "b": 2.0 },
+      "expected": 1.0,
+      "note": "min() is unavailable; use the ternary"
+    },
+    {
+      "expression": "s.contains('ell')",
+      "inputs": { "s": "hello" },
+      "expected": true
+    },
+    {
+      "expression": "s.startsWith('he')",
+      "inputs": { "s": "hello" },
+      "expected": true
+    },
+    {
+      "expression": "s.endsWith('lo')",
+      "inputs": { "s": "hello" },
+      "expected": true
+    },
+    {
+      "expression": "s.matches('^h.*o$')",
+      "inputs": { "s": "hello" },
+      "expected": true
+    },
+    { "expression": "'a' + 'b'", "inputs": {}, "expected": "ab" },
+    {
+      "expression": "'x' in items",
+      "inputs": { "items": ["x", "y"] },
+      "expected": true
+    },
+    {
+      "expression": "'k' in m",
+      "inputs": { "m": { "k": 1 } },
+      "expected": true
+    },
+    { "expression": "[1] + [2, 3]", "inputs": {}, "expected": [1, 2, 3] },
+    {
+      "expression": "[1, 2, w]",
+      "inputs": { "w": 3 },
+      "expected": [1, 2, 3]
+    },
+    {
+      "expression": "xs[1]",
+      "inputs": { "xs": [10, 20] },
+      "expected": 20,
+      "note": "non-string lists need the wrapper's value pre-wrapping"
+    },
+    {
+      "expression": "{'a': 1, 'b': w}",
+      "inputs": { "w": 2 },
+      "expected": { "a": 1, "b": 2 }
+    },
+    {
+      "expression": "m.b",
+      "inputs": { "m": { "a": 1, "b": 5 } },
+      "expected": 5
+    },
+    { "expression": "m['b']", "inputs": { "m": { "b": 7 } }, "expected": 7 },
+    {
+      "expression": "m.sizes[0]",
+      "inputs": { "m": { "sizes": [600, 720] } },
+      "expected": 600,
+      "note": "lists nested in bound maps need pre-wrapping too"
+    },
+    {
+      "expression": "cfg.grid[0][1]",
+      "inputs": { "cfg": { "grid": [["a", "b"]] } },
+      "expected": "b"
+    },
+    {
+      "expression": "cfg.rows[0][\"cells\"][1]",
+      "inputs": { "cfg": { "rows": [{ "cells": ["a", "b"] }] } },
+      "expected": "b"
+    },
+    {
+      "expression": "xs[0][1]",
+      "inputs": { "xs": [[1, 2]] },
+      "expected": 2
+    },
+    {
+      "expression": "m.sizes",
+      "inputs": { "m": { "sizes": [600, 720] } },
+      "expected": [600, 720]
+    },
+    {
+      "expression": "rows[0][\"w\"]",
+      "inputs": { "rows": [{ "w": 1 }] },
+      "expected": 1,
+      "note": "use index syntax after an index; rows[0].w is unsupported"
+    },
+    { "expression": "x == null", "inputs": { "x": null }, "expected": true },
+    { "expression": "-4", "inputs": {}, "expected": -4 },
+    {
+      "expression": "c ? [1] : [2]",
+      "inputs": { "c": true },
+      "expected": [1]
+    },
+    { "expression": "false ? 1 : null", "inputs": {}, "expected": null },
+    {
+      "expression": "m[\"sizes\"]",
+      "inputs": { "m": { "sizes": [600, 720] } },
+      "expected": [600, 720]
+    },
+    {
+      "expression": "m[\"gap\"] == null",
+      "inputs": { "m": { "gap": null } },
+      "expected": true
+    }
+  ],
+  "quirks": [
+    {
+      "expression": "1 + 1.5",
+      "inputs": {},
+      "expected": 2,
+      "note": "mixed arithmetic truncates when the int is on the left"
+    },
+    { "expression": "1.5 + 1", "inputs": {}, "expected": 2.5 },
+    {
+      "expression": "10 / 4",
+      "inputs": {},
+      "expected": 2,
+      "note": "int division truncates"
+    },
+    {
+      "expression": "[1, 2] == [1, 2]",
+      "inputs": {},
+      "expected": false,
+      "note": "list equality is identity, not structural"
+    },
+    {
+      "expression": "b\"ab\" + b\"cd\"",
+      "inputs": {},
+      "expected": [97, 98, 99, 100],
+      "note": "bytes literals behave as integer lists"
+    }
+  ],
+  "evaluateErrors": [
+    {
+      "expression": "missing + 1",
+      "inputs": { "a": 1 },
+      "errorContains": "Unknown variable \"missing\""
+    },
+    {
+      "expression": "missing + 1",
+      "inputs": { "a": 1 },
+      "errorContains": "Available inputs: \"a\""
+    },
+    {
+      "expression": "x < 'abc'",
+      "inputs": { "x": 1 },
+      "errorContains": "not a subtype"
+    },
+    {
+      "expression": "1 / 0",
+      "inputs": {},
+      "errorContains": "Evaluation of expression \"1 / 0\" failed"
+    },
+    {
+      "expression": "m.b.c",
+      "inputs": { "m": { "a": 1 } },
+      "errorContains": "Failed to read a member of input \"m\""
+    },
+    { "expression": "!1", "inputs": {}, "errorContains": "Negater" },
+    {
+      "expression": "s.matches('[')",
+      "inputs": { "s": "a" },
+      "errorContains": "FormatException"
+    },
+    {
+      "expression": "m.a.b",
+      "inputs": { "m": { "a": 5 } },
+      "errorContains": "Failed to read a member of input \"m\"",
+      "note": "member access on a scalar is not an unknown variable"
+    }
+  ],
+  "compileErrors": [
+    { "expression": "1 +", "errorContains": "Syntax error" },
+    { "expression": "", "errorContains": "Syntax error" },
+    { "expression": "a ==", "errorContains": "Syntax error" },
+    {
+      "expression": "-x",
+      "errorContains": "Syntax error",
+      "note": "unary minus works on literals only"
+    },
+    {
+      "expression": "'<<error>>'",
+      "errorContains": "Syntax error",
+      "note": "documented false positive of the error detection"
+    },
+    { "expression": "[1, 2 +]", "errorContains": "Syntax error" },
+    { "expression": "{'a': 1 +}", "errorContains": "Syntax error" },
+    {
+      "expression": "size('abc')",
+      "errorContains": "Unknown function \"size\""
+    },
+    { "expression": "has(m.a)", "errorContains": "Unknown function \"has\"" },
+    {
+      "expression": "[1, 2].map(x, x * 2)",
+      "errorContains": "Unknown function \"map\""
+    },
+    {
+      "expression": "max(1, 2)",
+      "errorContains": "Unknown function \"max\""
+    },
+    {
+      "expression": "\"abc\".contains(bar(1))",
+      "errorContains": "Unknown function \"bar\""
+    },
+    {
+      "expression": "rows[0].w",
+      "errorContains": "Unsupported expression",
+      "note": "field access after an index fails at plan time"
+    },
+    { "expression": "@#!", "errorContains": "Syntax error" },
+    { "expression": "1 +", "errorContains": "line 1:3" },
+    {
+      "expression": "x{a: 1}",
+      "errorContains": "Cannot parse",
+      "note": "protobuf message construction is not implemented"
+    }
+  ]
+}
