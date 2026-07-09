@@ -112,14 +112,14 @@ class Selector {
   /// A query that resolves to nothing — including shape mismatches
   /// like a data path traversing a non-map value — makes the
   /// condition fail; only unresolved markers block.
-  MatchResult match(Tree<Json> node) {
+  ///
+  /// When [readCache] is given, query reads are memoized in it. Within
+  /// one [Rule.select] call the same node is read for every variant,
+  /// so sharing the cache collapses the repeated reads of a condition
+  /// query that recurs across variants.
+  MatchResult match(Tree<Json> node, {Map<String, ReadResult>? readCache}) {
     for (final MapEntry(key: query, value: expected) in conditions.entries) {
-      ReadResult result;
-      try {
-        result = readQuery(node, query);
-      } on TreeExpressionsException {
-        result = const ReadMissing();
-      }
+      final result = _read(node, query, readCache);
 
       switch (result) {
         case ReadBlocked(:final blocker):
@@ -133,5 +133,27 @@ class Selector {
       }
     }
     return const MatchSuccess();
+  }
+
+  // ...........................................................................
+  /// Reads [query] at [node], reusing/filling [cache] when present.
+  /// Query errors are treated as "missing" (a shape mismatch is a
+  /// failed condition, not a resolution failure).
+  static ReadResult _read(
+    Tree<Json> node,
+    String query,
+    Map<String, ReadResult>? cache,
+  ) {
+    final cached = cache?[query];
+    if (cached != null) return cached;
+
+    ReadResult result;
+    try {
+      result = readQuery(node, query);
+    } on TreeExpressionsException {
+      result = const ReadMissing();
+    }
+    cache?[query] = result;
+    return result;
   }
 }

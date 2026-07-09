@@ -484,10 +484,29 @@ depends on both.
 11. **Optional rules.** An `optional: true` variant-list flag making
     "no variant matched" resolve to `null`/removal instead of an
     error. v1: always error; require a base variant instead.
-12. **Performance.** Selector evaluation is O(refs × variants ×
-    conditions) with repeated tree reads. Fine for expected sizes;
-    if profiling ever disagrees: per-node read memoization within a
-    resolve run, and rule-book indexing by first condition.
+12. **Performance.** _Resolved (2026-07-09) — profiled and
+    optimized; see `benchmark/` and `benchmark/RESULTS.md`._ A
+    Stopwatch harness (six workload profiles, JIT + AOT) plus
+    counter-based attribution drove four evidence-gated
+    optimizations, each a separate commit on branch `Performance`:
+    (1) a per-`select()` read cache (identical condition queries
+    across variants read once — wideBook −55 %); (2) a bounded
+    parsed-query cache in `tree_reader` (`readQuery` micro
+    −24…−60 %); (3) **single-walk `readQuery`** — the marker scan
+    became the engine of record and returns the value directly
+    instead of re-walking via `Tree.getOrNull`, also dropping the
+    redundant `containsMarker` (reads −32…−42 %; validated by the
+    conformance corpus at 5000 iterations + an adversarial 1.27 M-case
+    differential review); (4) an injectable shared expression cache on
+    `Resolver` (warm construction −99.6 % for a Resolver-per-fit
+    consumer). Cumulative end-to-end: realistic trees −25…−41 %,
+    wideBook −65…−72 %. Acquitted with evidence: book indexing by
+    first condition (candidate 6 — `select()` reads already cached),
+    `containsMarker` bookkeeping (folded into 3), and allocation trims
+    (candidate 7 — measured <15 %). The former suggestions here
+    (per-node read memoization, rule-book indexing) were thus
+    superseded by the per-select cache + single-walk read; indexing
+    was measured unnecessary.
 
 ---
 
@@ -541,7 +560,12 @@ depends on both.
     `optional: true` resolves "no variant matched" by removing the
     map entry (list elements become `null`) instead of erroring.
 12. **Performance** → no premature optimization; compile cache +
-    single collect pass; revisit on profiling evidence.
+    single collect pass; revisit on profiling evidence. _Revisited
+    2026-07-09 (branch `Performance`): profiled, then four
+    evidence-gated optimizations landed — per-select read cache,
+    parsed-query cache, single-walk `readQuery` (mirror is now
+    engine of record), and an injectable shared expression cache.
+    See §11.12 and `benchmark/RESULTS.md`._
 
 ### 13.2 Additional decisions
 

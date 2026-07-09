@@ -1,5 +1,7 @@
 # Changelog
 
+## [0.2.0] - 2026-07-09
+
 ## [0.1.0] - 2026-07-08
 
 ### Added
@@ -37,5 +39,6 @@ pinning the supported cross-language subset.
 
 - Initial boilerplate.
 
+[0.2.0]: https://github.com/ggsuite/gg_tree_expressions/compare/0.1.0...0.2.0
 [0.1.0]: https://github.com/ggsuite/gg_tree_expressions/compare/0.0.2...0.1.0
 [0.0.2]: https://github.com/ggsuite/gg_tree_expressions/releases/tag/0.0.2

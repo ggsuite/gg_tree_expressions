@@ -245,5 +245,20 @@ void main() {
         expect((result as ReadBlocked).blocker, '/#pairs[0]');
       });
     });
+
+    group('parsed-query cache', () {
+      test('should reuse, bound, and survive a clear', () {
+        final me = node('me', {'a': 1});
+        // Miss then hit for the same query.
+        expect(readQuery(me, '#a'), isA<ReadValue>());
+        expect(readQuery(me, '#a'), isA<ReadValue>());
+        // > 512 distinct queries force the bounded clear at least once.
+        for (var i = 0; i < 600; i++) {
+          expect(readQuery(me, '#k$i'), isA<ReadMissing>());
+        }
+        // Reads still work after the cache was cleared.
+        expect(readQuery(me, '#a'), isA<ReadValue>());
+      });
+    });
   });
 }

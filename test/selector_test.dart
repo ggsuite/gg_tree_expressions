@@ -154,6 +154,26 @@ void main() {
         expect(blocked.query, './#w');
         expect(blocked.blocker, '/#w');
       });
+
+      group('with a readCache', () {
+        test('should fill the cache on a miss', () {
+          final me = node('me', {'w': 2});
+          final selector = Selector.fromJson({'./#w': 2}, context: 'x');
+          final cache = <String, ReadResult>{};
+          expect(selector.match(me, readCache: cache), isA<MatchSuccess>());
+          expect(cache['./#w'], isA<ReadValue>());
+          expect((cache['./#w']! as ReadValue).value, 2);
+        });
+
+        test('should reuse a cached read instead of reading again', () {
+          // The node holds w=2, but the cache claims 99. A cache hit
+          // makes the "== 99" condition succeed, proving no re-read.
+          final me = node('me', {'w': 2});
+          final selector = Selector.fromJson({'./#w': 99}, context: 'x');
+          final cache = <String, ReadResult>{'./#w': const ReadValue(99)};
+          expect(selector.match(me, readCache: cache), isA<MatchSuccess>());
+        });
+      });
     });
   });
 }

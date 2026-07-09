@@ -28,7 +28,16 @@ class Resolver {
   ///
   /// Compilation problems are reported immediately with their rule
   /// key and variant index.
-  Resolver({required this.ruleBook}) {
+  ///
+  /// Pass an [expressionCache] to share compiled expressions across
+  /// resolvers. A compiled expression is a pure function of its source
+  /// string, so a consumer that builds one resolver per fit/article can
+  /// hand every resolver the same cache and pay the (ANTLR) compile
+  /// cost once per distinct expression instead of once per resolver.
+  Resolver({
+    required this.ruleBook,
+    Map<String, CompiledExpression>? expressionCache,
+  }) : _cache = expressionCache ?? <String, CompiledExpression>{} {
     for (final key in ruleBook.keys) {
       final rule = ruleBook.ruleForKey(key)!;
       for (var i = 0; i < rule.variants.length; i++) {
@@ -48,7 +57,7 @@ class Resolver {
   /// The merged rule book answering all references.
   final RuleBook ruleBook;
 
-  final Map<String, CompiledExpression> _cache = {};
+  final Map<String, CompiledExpression> _cache;
 
   /// Re-enqueue limit per tree location; exceeding it means an
   /// expression keeps regenerating itself.

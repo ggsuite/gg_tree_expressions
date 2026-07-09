@@ -49,11 +49,20 @@ longer exist.
    (`parent[key] = result`), never `Tree.set` — gg_json's
    runtime-type guard throws when a value changes type.
 5. **`tree_reader.dart` mirrors gg_tree's private `_getOrNull`
-   search.** `test/tree_reader_conformance_test.dart` pins the
-   mirror against the real read over a random corpus — after any
-   gg_tree/gg_json version bump, run it first; if it fails, gg_tree
-   semantics drifted. Verified against gg_tree 2.5.0 / gg_json 3.2.0
-   (note: gg_json's deep equality is literally named `deeplEquals`).
+   search — and since the single-walk optimization (branch
+   `Performance`) the mirror is the ENGINE OF RECORD, not just a
+   block detector.** `readQuery` now returns the value the scan
+   walks to instead of re-reading via `Tree.getOrNull` (that is only
+   the fallback for the `#node/...` namespace and shape anomalies).
+   So a gg_tree/gg_json drift no longer just breaks block detection —
+   it can return WRONG resolution VALUES.
+   `test/tree_reader_conformance_test.dart` pins the mirror against
+   the real read over a random corpus and is now load-bearing: run it
+   FIRST after any gg_tree/gg_json bump, and bump its iteration count
+   (shipped tripwire is 120; validate at ≥1000 when touching the read
+   path). If it fails, gg_tree semantics drifted. Verified against
+   gg_tree 2.5.0 / gg_json 3.2.0 (note: gg_json's deep equality is
+   literally named `deeplEquals`).
 6. The `// ignore_for_file: implementation_imports` in
    `compiled_expression.dart` is deliberate (declared mitigation
    boundary). A cel version bump can break these src imports — the
@@ -84,8 +93,15 @@ longer exist.
 - ds_slot adapter: a `ResolveRulesFitter` wrapping `resolve()` —
   needs copy semantics or a transaction story, since `inPlace: true`
   leaves partial state on error.
-- Performance: no memoization yet by decision; if profiling demands,
-  add a per-round read cache keyed by (node, query) — see
-  architecture.md §11.12.
+- Performance: profiled and optimized on branch `Performance`
+  (2026-07-09). Four evidence-gated wins landed — per-select read
+  cache, bounded parsed-query cache in `tree_reader`, single-walk
+  `readQuery` (the marker scan is now the engine of record; see
+  landmine 5), and an injectable shared expression cache on
+  `Resolver`. Benchmarks live in `benchmark/` (ignored by gg); run
+  `dart run benchmark/main.dart jit 2.0` or the AOT exe; baselines +
+  acquitted candidates (book indexing, allocation trims) in
+  `benchmark/RESULTS.md`. Book indexing / per-node memoization were
+  measured unnecessary. Not pushed.
 - cel upstreaming candidates: stderr-free parsing, adapter
   pass-through fix.

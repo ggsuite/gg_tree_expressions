@@ -12,6 +12,7 @@ import 'rule_ref.dart';
 import 'rule_variant.dart';
 import 'selector.dart';
 import 'tree_expressions_exception.dart';
+import 'tree_reader.dart';
 
 // .............................................................................
 /// The outcome of selecting a variant of a rule at a node.
@@ -172,10 +173,13 @@ class Rule {
     var blockedSpecificity = -1;
     var blockedIndex = -1;
 
+    // One node, read once per distinct condition query across variants.
+    final readCache = <String, ReadResult>{};
+
     for (var i = 0; i < variants.length; i++) {
       final variant = variants[i];
       final specificity = variant.selector.specificity;
-      switch (variant.selector.match(node)) {
+      switch (variant.selector.match(node, readCache: readCache)) {
         case MatchSuccess():
           if (specificity > bestSpecificity ||
               (specificity == bestSpecificity && i > bestIndex)) {

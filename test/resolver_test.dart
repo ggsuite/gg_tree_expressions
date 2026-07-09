@@ -77,6 +77,27 @@ void main() {
         expect(e!.message, contains('In rule "§bad", variant 0:'));
         expect(e.message, contains('Syntax error'));
       });
+
+      test('should share an injected expression cache', () {
+        final cache = <String, CompiledExpression>{};
+        final book = RuleBook.fromJson({
+          '§w': [
+            {'expression': '1.0 + 2.0'},
+          ],
+        });
+
+        // First resolver populates the shared cache.
+        Resolver(ruleBook: book, expressionCache: cache);
+        expect(cache.keys, contains('1.0 + 2.0'));
+        final compiled = cache['1.0 + 2.0'];
+
+        // A second resolver reuses the same compiled expression and
+        // still resolves correctly.
+        final r2 = Resolver(ruleBook: book, expressionCache: cache);
+        expect(identical(cache['1.0 + 2.0'], compiled), isTrue);
+        final resolved = r2.resolve(node('n', {'v': ref('§w')}), inPlace: true);
+        expect(resolved.getOrNull<double>('./#v'), 3.0);
+      });
     });
 
     group('resolve()', () {
