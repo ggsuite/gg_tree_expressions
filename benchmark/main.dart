@@ -6,18 +6,15 @@
 
 // Stopwatch-based performance harness for gg_tree_expressions.
 //
-// Lives in benchmark/ (ignored by `gg one can commit`). Everything is
-// kept inside main() or private helpers so the repo-wide lints
-// (public_member_api_docs, 80 cols, …) pass without doc burden.
-// Writes only to stdout — never stderr (the gg tool deadlocks on
-// undrained child stderr; benchmarks obey the same rule).
+// Lives in benchmark/ (ignored by gg). Code stays inside main() or
+// private helpers so the repo-wide lints pass without doc burden, and
+// writes only to stdout — never stderr (gg deadlocks on undrained
+// child stderr).
 //
 // Run JIT:  dart run benchmark/main.dart jit
 // Run AOT:  dart compile exe benchmark/main.dart -o build/bench.exe
 //           build/bench.exe aot
-//
-// Optional second arg is a run-count scale (default 1.0), e.g.
-//   dart run benchmark/main.dart jit 0.25   (quick smoke pass)
+// Optional 2nd arg = run-count scale (default 1.0).
 
 import 'dart:io';
 import 'dart:math';

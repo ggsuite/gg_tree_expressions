@@ -100,6 +100,124 @@ void main() {
       });
     });
 
+    group('resolveVerbose()', () {
+      test('should report minimal provenance for a rule', () {
+        final book = {
+          '§w': [
+            {'expression': '1.0 + 2.0'},
+          ],
+        };
+        final (resolved, report) = resolver(
+          book,
+        ).resolveVerbose(node('root', {'v': ref('§w')}), inPlace: true);
+        expect(resolved.getOrNull<double>('./#v'), 3.0);
+        expect(report.rich, isFalse);
+        final e = report.entries.single;
+        expect(e.location, '/#v');
+        expect(e.kind, ProvenanceKind.rule);
+        expect(e.ruleKey, '§w');
+        expect(e.variantIndex, 0);
+        expect(e.value, 3.0);
+        expect(e.selector, isNull);
+        expect(e.inputs, isNull);
+        expect(e.expression, isNull);
+        expect(e.aliasChain, isNull);
+      });
+
+      test('should report rich provenance for a rule (copy mode)', () {
+        final (_, report) = resolver(
+          borderBook,
+        ).resolveVerbose(appTree(), rich: true);
+        expect(report.rich, isTrue);
+        final e = report.at('/dialog#borderWidth').single;
+        expect(e.kind, ProvenanceKind.rule);
+        expect(e.ruleKey, '§borderWidth');
+        expect(e.variantIndex, 2);
+        expect(e.value, 3.0);
+        expect(e.selector, {'theme#id': 'dark', '#platform': 'mobile'});
+        expect(e.inputs, {'screenWidth': 380.0});
+        expect(e.expression, 'screenWidth < 400.0 ? 3.0 : 2.0');
+        expect(e.aliasChain, ['§borderWidth']);
+      });
+
+      test('should report inline provenance (minimal and rich)', () {
+        Tree<Json> tree() => node('root', {
+          'x': {'§expression': '2 * 3'},
+        });
+        final (_, min) = resolver({}).resolveVerbose(tree(), inPlace: true);
+        final eMin = min.entries.single;
+        expect(eMin.kind, ProvenanceKind.inline);
+        expect(eMin.ruleKey, isNull);
+        expect(eMin.variantIndex, isNull);
+        expect(eMin.value, 6);
+        expect(eMin.expression, isNull);
+
+        final (_, rich) = resolver(
+          {},
+        ).resolveVerbose(tree(), inPlace: true, rich: true);
+        final e = rich.entries.single;
+        expect(e.expression, '2 * 3');
+        expect(e.inputs, isEmpty);
+        expect(e.selector, isNull);
+        expect(e.aliasChain, isEmpty);
+      });
+
+      test('should report optional-removal provenance (minimal/rich)', () {
+        final book = {
+          '§opt': {
+            'optional': true,
+            'variants': [
+              {
+                'selector': {'#nope': true},
+                'expression': '1',
+              },
+            ],
+          },
+        };
+        final (rMin, repMin) = resolver(
+          book,
+        ).resolveVerbose(node('root', {'m': ref('§opt')}), inPlace: true);
+        expect(rMin.getOrNull<dynamic>('./#m'), isNull);
+        final e = repMin.entries.single;
+        expect(e.kind, ProvenanceKind.optionalRemoval);
+        expect(e.ruleKey, '§opt');
+        expect(e.variantIndex, isNull);
+        expect(e.value, isNull);
+        expect(e.aliasChain, isNull);
+
+        final (_, repRich) = resolver(book).resolveVerbose(
+          node('root', {'m': ref('§opt')}),
+          inPlace: true,
+          rich: true,
+        );
+        expect(repRich.entries.single.aliasChain, ['§opt']);
+      });
+
+      test('should record one entry per alias hop with the chain', () {
+        final book = {
+          '§a': [
+            {'expression': "{'§': '§b'}"},
+          ],
+          '§b': [
+            {'expression': '42'},
+          ],
+        };
+        final (resolved, report) = resolver(book).resolveVerbose(
+          node('root', {'v': ref('§a')}),
+          inPlace: true,
+          rich: true,
+        );
+        expect(resolved.getOrNull<dynamic>('./#v'), 42);
+
+        final hops = report.at('/#v').toList();
+        expect(hops.map((e) => e.ruleKey), ['§a', '§b']);
+        expect(hops.first.value, {'§': '§b'});
+        expect(hops.first.aliasChain, ['§a']);
+        expect(hops.last.value, 42);
+        expect(hops.last.aliasChain, ['§a', '§b']);
+      });
+    });
+
     group('resolve()', () {
       test('should resolve the architecture doc example', () {
         final resolved = resolver(borderBook).resolve(appTree());

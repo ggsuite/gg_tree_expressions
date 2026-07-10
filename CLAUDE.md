@@ -89,7 +89,15 @@ longer exist.
 ## Open items
 
 - Verbose/provenance mode (which rule/variant produced each value) —
-  wanted eventually, off by default (user decision, answer 9).
+  **implemented** on branch `Verbose-mode`. `Resolver.resolveVerbose(tree,
+  {inPlace, rich})` returns `(Tree<T>, ResolutionReport)`; `resolve()` is
+  untouched (the tree stays clean — no sidecar keys, so all invariants
+  hold). Report is minimal by default (location, kind, rule key, variant
+  index, value); `rich: true` adds the winning selector, bound inputs,
+  expression source, and alias chain. One entry per alias hop.
+  `lib/src/resolution_report.dart` (`ResolutionReport` / `ProvenanceEntry`
+  / `ProvenanceKind`). Capture is threaded via a null-gated `_Recorder`,
+  so `resolve()` pays nothing.
 - ds_slot adapter: a `ResolveRulesFitter` wrapping `resolve()` —
   needs copy semantics or a transaction story, since `inPlace: true`
   leaves partial state on error.

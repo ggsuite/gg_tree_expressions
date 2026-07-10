@@ -141,6 +141,29 @@ validates every resolved result of the rule.
 - If nothing can make progress, resolution fails listing every
   pending item and the value it waits for.
 
+## Debugging: verbose mode
+
+To see which rule/variant produced each value, use `resolveVerbose`
+instead of `resolve`. It behaves identically but also returns a
+`ResolutionReport`:
+
+```dart
+final (resolved, report) = Resolver(ruleBook: ruleBook)
+    .resolveVerbose(app, rich: true);
+print(report);
+// ResolutionReport (1 entries, rich):
+//   /dialog#borderWidth ← §borderWidth[2] = 3.0  {selector {…}; inputs {…}; …}
+```
+
+Each `ProvenanceEntry` carries, at minimum, the `location`, the `kind`
+(`rule` / `inline` / `optionalRemoval`), the `ruleKey`, the
+`variantIndex`, and the `value`. Pass `rich: true` to also capture the
+winning variant's `selector`, the bound `inputs`, the `expression`
+source, and the `aliasChain`. A location appears once per alias hop.
+`report.at(location)` filters, and both `ResolutionReport` and
+`ProvenanceEntry` have `toJson()`. `resolve()` itself is unchanged and
+records nothing.
+
 ## Supported CEL subset
 
 Expressions run on the [`cel`](https://pub.dev/packages/cel) Dart

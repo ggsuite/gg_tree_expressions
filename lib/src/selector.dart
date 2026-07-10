@@ -109,14 +109,11 @@ class Selector {
   // ...........................................................................
   /// Matches this selector at [node].
   ///
-  /// A query that resolves to nothing — including shape mismatches
-  /// like a data path traversing a non-map value — makes the
-  /// condition fail; only unresolved markers block.
+  /// A query resolving to nothing — including a shape mismatch — makes
+  /// the condition fail; only unresolved markers block.
   ///
-  /// When [readCache] is given, query reads are memoized in it. Within
-  /// one [Rule.select] call the same node is read for every variant,
-  /// so sharing the cache collapses the repeated reads of a condition
-  /// query that recurs across variants.
+  /// A [readCache], if given, memoizes reads across a [Rule.select]
+  /// call so a condition query shared by several variants is read once.
   MatchResult match(Tree<Json> node, {Map<String, ReadResult>? readCache}) {
     for (final MapEntry(key: query, value: expected) in conditions.entries) {
       final result = _read(node, query, readCache);

@@ -1,6 +1,29 @@
 # Changelog
 
+## [0.3.0] - 2026-07-10
+
+### Changed
+
+- Verbose mode
+
 ## [0.2.0] - 2026-07-09
+
+### Added
+
+- `Resolver` accepts an optional `expressionCache` so resolvers built
+per fit/article share compiled expressions instead of re-parsing the
+rule book each time (warm construction \~99% cheaper).
+- Benchmark harness under `benchmark/` (six workload profiles, JIT and
+AOT) with baselines and attribution in `benchmark/RESULTS.md`.
+
+### Changed
+
+- Performance: `readQuery` walks the search chain once — the marker
+scan is now the engine of record and returns the value directly
+instead of re-reading via `Tree.getOrNull`, also dropping a
+redundant deep marker check. Added a per-`select()` read cache and a
+bounded parsed-query cache. Large read-path and end-to-end speedups
+with no behavior change.
 
 ## [0.1.0] - 2026-07-08
 
@@ -39,6 +62,7 @@ pinning the supported cross-language subset.
 
 - Initial boilerplate.
 
+[0.3.0]: https://github.com/ggsuite/gg_tree_expressions/compare/0.2.0...0.3.0
 [0.2.0]: https://github.com/ggsuite/gg_tree_expressions/compare/0.1.0...0.2.0
 [0.1.0]: https://github.com/ggsuite/gg_tree_expressions/compare/0.0.2...0.1.0
 [0.0.2]: https://github.com/ggsuite/gg_tree_expressions/releases/tag/0.0.2

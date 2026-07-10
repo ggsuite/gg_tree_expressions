@@ -475,9 +475,15 @@ depends on both.
    *expression*.
 8. **Result typing.** Optional `resultType` field per rule for
    validation (`number`, `string`, `bool`, `json`)? v1: untyped.
-9. **Provenance / debugging.** Optionally record which rule/variant
-   produced each resolved value (sidecar keys or a resolution report
-   object) for tooling. v1: rich errors only.
+9. **Provenance / debugging.** _Resolved (2026-07-09) — implemented
+   as a resolution report object (not sidecar keys, which would break
+   the marker-free / idempotent / re-resolvable invariants)._
+   `Resolver.resolveVerbose(tree, {inPlace, rich})` returns
+   `(Tree<T>, ResolutionReport)`; `resolve()` is unchanged and pays
+   nothing (capture is a null-gated recorder). Minimal by default
+   (location, kind, rule key, variant index, value); `rich: true` adds
+   the winning selector, bound inputs, expression source, and alias
+   chain. See `lib/src/resolution_report.dart`.
 10. **Namespacing.** Rule keys are flat camelCase. If rule books grow
     large, dotted namespaces (`§geometry.panelWidth`) may be worth the
     added key-pattern complexity.
@@ -554,7 +560,9 @@ depends on both.
    (`number | string | bool | list | map`), validated after
    evaluation.
 9. **Provenance/verbose mode** → not in v1; error paths carry full
-   context so a report object can be added later.
+   context so a report object can be added later. _Added 2026-07-09
+   (branch `Verbose-mode`): `Resolver.resolveVerbose` → a
+   `ResolutionReport` object (minimal / `rich`). See §11.9._
 10. **Namespacing** → flat keys only in v1.
 11. **Optional rules** → implemented: object-form rule with
     `optional: true` resolves "no variant matched" by removing the

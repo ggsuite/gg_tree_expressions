@@ -8,6 +8,7 @@ library;
 
 export 'src/compiled_expression.dart';
 export 'src/did_you_mean.dart';
+export 'src/resolution_report.dart';
 export 'src/resolver.dart';
 export 'src/result_type.dart';
 export 'src/rule.dart';

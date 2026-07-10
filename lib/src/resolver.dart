@@ -8,6 +8,7 @@ import 'package:gg_json/gg_json.dart';
 import 'package:gg_tree/gg_tree.dart';
 
 import 'compiled_expression.dart';
+import 'resolution_report.dart';
 import 'rule.dart';
 import 'rule_book.dart';
 import 'rule_ref.dart';
@@ -73,7 +74,32 @@ class Resolver {
   /// With [inPlace] the tree is mutated directly; this also resolves
   /// a subtree within its full tree. On error the working tree may
   /// be partially resolved.
-  Tree<T> resolve<T extends Json>(Tree<T> tree, {bool inPlace = false}) {
+  Tree<T> resolve<T extends Json>(Tree<T> tree, {bool inPlace = false}) =>
+      _resolve(tree, inPlace, null);
+
+  // ...........................................................................
+  /// Resolves [tree] like [resolve], additionally returning a
+  /// [ResolutionReport] of what produced each value.
+  ///
+  /// Minimal by default (location, kind, rule key, variant index,
+  /// value); [rich] also captures the winning selector, bound inputs,
+  /// expression source, and alias chain. A location appears once per
+  /// alias hop.
+  (Tree<T>, ResolutionReport) resolveVerbose<T extends Json>(
+    Tree<T> tree, {
+    bool inPlace = false,
+    bool rich = false,
+  }) {
+    final recorder = _Recorder(rich);
+    final resolved = _resolve(tree, inPlace, recorder);
+    return (resolved, ResolutionReport(entries: recorder.entries, rich: rich));
+  }
+
+  Tree<T> _resolve<T extends Json>(
+    Tree<T> tree,
+    bool inPlace,
+    _Recorder? recorder,
+  ) {
     if (!inPlace && !tree.isRoot) {
       throw ResolveException([
         'resolve() would deep-copy the subtree at "${tree.path}" '
@@ -93,7 +119,7 @@ class Resolver {
       final discovered = <_WorkItem>[];
 
       for (final item in pending) {
-        if (_step(item, discovered)) {
+        if (_step(item, discovered, recorder)) {
           progressed = true;
         } else {
           deferred.add(item);
@@ -220,13 +246,18 @@ class Resolver {
 
   /// Processes one item. Returns true when it was resolved, false
   /// when it must be retried in the next round.
-  bool _step(_WorkItem item, List<_WorkItem> discovered) {
+  bool _step(_WorkItem item, List<_WorkItem> discovered, _Recorder? recorder) {
     final map = item.value as Map<dynamic, dynamic>;
     if (isReference(map)) {
-      return _stepReference(item, _referencedKey(item, map), discovered);
+      return _stepReference(
+        item,
+        _referencedKey(item, map),
+        discovered,
+        recorder,
+      );
     }
     if (isInlineExpression(map)) {
-      return _stepInline(item, discovered);
+      return _stepInline(item, discovered, recorder);
     }
 
     final offending = map.keys
@@ -258,7 +289,12 @@ class Resolver {
     return key;
   }
 
-  bool _stepReference(_WorkItem item, String key, List<_WorkItem> discovered) {
+  bool _stepReference(
+    _WorkItem item,
+    String key,
+    List<_WorkItem> discovered,
+    _Recorder? recorder,
+  ) {
     if (item.chain.contains(key)) {
       final chain = [...item.chain, key];
       throw CircularAliasException(
@@ -297,6 +333,7 @@ class Resolver {
         return false;
       case SelectNone(:final reasons):
         if (rule.isOptional) {
+          _recordRemoval(recorder, item, key);
           _remove(item);
           return true;
         }
@@ -307,19 +344,20 @@ class Resolver {
           item.blockReason = inputs.reason;
           return false;
         }
-        final result = _evaluate(
-          variant,
-          inputs as Map<String, Object?>,
-          rule,
-          index,
-          item.location,
-        );
-        _writeAndRescan(item, result, [...item.chain, key], discovered);
+        final bound = inputs as Map<String, Object?>;
+        final result = _evaluate(variant, bound, rule, index, item.location);
+        final chain = [...item.chain, key];
+        _recordRule(recorder, item, key, index, variant, bound, result, chain);
+        _writeAndRescan(item, result, chain, discovered);
         return true;
     }
   }
 
-  bool _stepInline(_WorkItem item, List<_WorkItem> discovered) {
+  bool _stepInline(
+    _WorkItem item,
+    List<_WorkItem> discovered,
+    _Recorder? recorder,
+  ) {
     final map = item.value as Map<dynamic, dynamic>;
     const allowed = {inlineExpressionKey, inlineInputsKey};
     final unknown = map.keys.where((k) => !allowed.contains(k));
@@ -344,6 +382,7 @@ class Resolver {
       item.blockReason = inputs.reason;
       return false;
     }
+    final bound = inputs as Map<String, Object?>;
 
     final CompiledExpression expression;
     try {
@@ -360,7 +399,7 @@ class Resolver {
 
     final Object? result;
     try {
-      result = expression.evaluate(inputs as Map<String, Object?>);
+      result = expression.evaluate(bound);
     } on TreeExpressionsException catch (e) {
       throw ExpressionException([
         'In $context:',
@@ -368,8 +407,76 @@ class Resolver {
       ], expression: variant.expression);
     }
 
+    _recordInline(recorder, item, variant, bound, result);
     _writeAndRescan(item, result, item.chain, discovered);
     return true;
+  }
+
+  // ...........................................................................
+  // Provenance recording (verbose mode; no-ops when [recorder] is null)
+
+  void _recordRule(
+    _Recorder? recorder,
+    _WorkItem item,
+    String key,
+    int index,
+    RuleVariant variant,
+    Map<String, Object?> inputs,
+    Object? result,
+    List<String> chain,
+  ) {
+    if (recorder == null) return;
+    recorder.entries.add(
+      ProvenanceEntry(
+        location: item.location,
+        kind: ProvenanceKind.rule,
+        ruleKey: key,
+        variantIndex: index,
+        value: result,
+        selector: recorder.rich
+            ? Map<String, Object>.of(variant.selector.conditions)
+            : null,
+        inputs: recorder.rich ? Map<String, Object?>.of(inputs) : null,
+        expression: recorder.rich ? variant.expression : null,
+        aliasChain: recorder.rich ? List<String>.unmodifiable(chain) : null,
+      ),
+    );
+  }
+
+  void _recordInline(
+    _Recorder? recorder,
+    _WorkItem item,
+    RuleVariant variant,
+    Map<String, Object?> inputs,
+    Object? result,
+  ) {
+    if (recorder == null) return;
+    recorder.entries.add(
+      ProvenanceEntry(
+        location: item.location,
+        kind: ProvenanceKind.inline,
+        value: result,
+        inputs: recorder.rich ? Map<String, Object?>.of(inputs) : null,
+        expression: recorder.rich ? variant.expression : null,
+        aliasChain: recorder.rich
+            ? List<String>.unmodifiable(item.chain)
+            : null,
+      ),
+    );
+  }
+
+  void _recordRemoval(_Recorder? recorder, _WorkItem item, String key) {
+    if (recorder == null) return;
+    recorder.entries.add(
+      ProvenanceEntry(
+        location: item.location,
+        kind: ProvenanceKind.optionalRemoval,
+        ruleKey: key,
+        aliasChain: recorder.rich
+            ? List<String>.unmodifiable([...item.chain, key])
+            : null,
+      ),
+    );
   }
 
   // ...........................................................................
@@ -573,6 +680,19 @@ class Resolver {
 class _Blocked {
   _Blocked(this.reason);
   final String reason;
+}
+
+// .............................................................................
+/// Collects provenance entries during a verbose resolve.
+class _Recorder {
+  _Recorder(this.rich);
+
+  /// Whether to capture the rich fields (selector, inputs, expression,
+  /// alias chain).
+  final bool rich;
+
+  /// The entries collected so far, in resolution order.
+  final List<ProvenanceEntry> entries = [];
 }
 
 // .............................................................................

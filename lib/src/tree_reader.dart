@@ -62,9 +62,8 @@ String messageOf(Object error) {
 }
 
 // .............................................................................
-/// A query parsed once: its [TreeQuery] and the parsed data-path
-/// [segments]. Both are pure functions of the query string, and a rule
-/// book uses a small stable set of query strings, so parsing is cached.
+/// A query parsed once: its [TreeQuery] and data-path [segments].
+/// Cached by query string — a rule book uses few, stable queries.
 class _ParsedQuery {
   _ParsedQuery(this.query, this.segments);
   final TreeQuery query;
@@ -73,10 +72,8 @@ class _ParsedQuery {
 
 final Map<String, _ParsedQuery> _parseCache = <String, _ParsedQuery>{};
 
-/// Parses [query] once and caches the result by query string. Throws
-/// (without caching) when the query is malformed. Bounded like
-/// gg_tree's own query cache so a long-lived process cannot grow it
-/// without limit.
+/// Parses [query] once, cached by query string (throws uncached on a
+/// malformed query). Bounded like gg_tree's own query cache.
 _ParsedQuery _parse(String query) {
   final cached = _parseCache[query];
   if (cached != null) return cached;
@@ -91,11 +88,10 @@ _ParsedQuery _parse(String query) {
 // .............................................................................
 /// Reads [query] relative to [node], detecting unresolved markers.
 ///
-/// Mirrors `Tree.getOrNull` semantics but returns [ReadBlocked] when
-/// the resolution would read — or silently search past — a reference
-/// string, escaped literal, or inline expression map. Shape errors
-/// (e.g. a data path traversing a non-map value) throw a
-/// [TreeExpressionsException] naming query and node.
+/// Mirrors `Tree.getOrNull`, but returns [ReadBlocked] when the read
+/// would touch — or search past — a marker (a reference or inline
+/// expression map). Shape errors (e.g. a data path through a non-map)
+/// throw a [TreeExpressionsException] naming query and node.
 ReadResult readQuery(Tree<Json> node, String query) {
   final _ParsedQuery pq;
   try {

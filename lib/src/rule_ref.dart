@@ -19,13 +19,10 @@ const String inlineInputsKey = '§inputs';
 /// Returns true when [key] is a valid rule key like `'§borderWidth'`.
 bool isRuleKey(String key) => ruleKeyPattern.hasMatch(key);
 
-/// Returns true when [value] is a reference like
-/// `{"§": "§borderWidth"}`.
+/// Returns true when [value] is a reference like `{"§": "§name"}`.
 ///
-/// Plain strings are never references — a string value
-/// `'§borderWidth'` is ordinary data. This keeps resolved trees
-/// re-resolvable: no produced value can accidentally look like an
-/// unresolved reference.
+/// Plain strings are never references, so no produced value can look
+/// like one — resolved trees stay re-resolvable.
 bool isReference(Object? value) =>
     value is Map && value.containsKey(referenceKey);
 
@@ -34,13 +31,12 @@ bool isReference(Object? value) =>
 bool isInlineExpression(Object? value) =>
     value is Map && value.containsKey(inlineExpressionKey);
 
-/// Returns true when [value] is unresolved: a map carrying a key
-/// that starts with `§`.
+/// Returns true when [value] is unresolved: a map with a key starting
+/// with `§`.
 ///
-/// Such maps are always system constructs (references or inline
-/// expressions — anything else fails resolution with a clear
-/// message, which also catches typos like `"§expresion"`). Keys
-/// starting with `§` are therefore reserved in tree data.
+/// Such maps are always references or inline expressions; anything
+/// else (e.g. the typo `"§expresion"`) fails resolution loudly. Keys
+/// starting with `§` are reserved in tree data.
 bool isMarker(Object? value) =>
     value is Map && value.keys.any((k) => k is String && k.startsWith('§'));
 

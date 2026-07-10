@@ -27,26 +27,19 @@ import 'tree_reader.dart';
 /// A CEL expression compiled once and evaluated many times with
 /// different input bindings.
 ///
-/// Engine gotchas this wrapper neutralizes:
-/// - The engine's own parse path swallows syntax errors (bad sources
-///   compile to an `'<<error>>'` literal) and prints diagnostics to
-///   stderr on every parse — which deadlocks test runners that do
-///   not drain stderr (e.g. the gg tool). [compile] therefore parses
-///   listener-free itself, collects real syntax errors with line and
-///   column, and additionally rejects `'<<error>>'` literals (they
-///   also mark unary minus on non-literals, which the engine cannot
-///   parse). Consequence: the literal string `'<<error>>'` cannot
-///   appear in an expression source.
-/// - Unknown functions and macros are rejected at [compile] with a
-///   clear message.
-/// - The engine's standard type adapter rejects most list shapes and
-///   cannot pass its own wrapped values through — index access into
-///   bound maps and ternary list/null branches would crash. Programs
-///   here run with [_JsonTypeAdapter] instead, which accepts
-///   arbitrary JSON.
+/// The mitigation boundary around the `cel` engine's quirks:
+/// - It swallows syntax errors (into an `'<<error>>'` literal) and
+///   prints ANTLR diagnostics to stderr on every parse, deadlocking
+///   runners that do not drain stderr (the gg tool). [compile] parses
+///   listener-free, reports syntax errors with line and column, and
+///   rejects `'<<error>>'` literals (also emitted for unary minus on
+///   non-literals) — so that literal cannot appear in a source.
+/// - Unknown functions and macros are rejected at [compile].
+/// - Its type adapter rejects most list shapes and cannot pass its own
+///   wrapped values through, so programs run with [_JsonTypeAdapter],
+///   which accepts arbitrary JSON.
 /// - Unknown-identifier errors embed the whole activation map;
-///   [evaluate] replaces them with a concise message that also
-///   distinguishes failed member access from missing variables.
+///   [evaluate] replaces them with a concise message.
 class CompiledExpression {
   CompiledExpression._(this.source, this._program);
 
