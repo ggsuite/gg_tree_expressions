@@ -130,6 +130,11 @@ validates every resolved result of the rule.
   copy would silently lose inherited context — the resolver fails
   fast instead). `resolve(tree, inPlace: true)` mutates directly and
   also resolves a subtree within its full tree.
+- `resolveAtomic(tree)` mutates the tree in place but atomically:
+  resolution runs on a copy and is written back only on success, so on
+  error the tree is left untouched (unlike `inPlace: true`, which may
+  leave partial state). Meant for pipeline steps — e.g. a fitter —
+  that must mutate the tree they are handed yet stay all-or-nothing.
 - One call resolves everything, order-independently: items whose
   selectors or inputs read still-unresolved values are deferred and
   retried; queries never silently search past an unresolved value.

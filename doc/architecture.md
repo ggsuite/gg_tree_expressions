@@ -393,7 +393,12 @@ this lives in this repository:
 - **Processing-step wrapper.** Consumers with a step-chain concept
   (e.g. a `Fitter` in `ds_slot`) wrap `Resolver.resolve` as one step in
   their pipeline, positioned after the standardized tree is built and
-  before steps that consume the resolved variables.
+  before steps that consume the resolved variables. A fitter that must
+  mutate the tree it is handed yet stay all-or-nothing on error uses
+  `Resolver.resolveAtomic(tree)` (added 2026-07-10): it resolves a copy
+  and writes the result back only on success, so a failed fit leaves
+  the tree untouched. Feasible because resolution only ever changes
+  node data, never structure.
 - **Growth instructions.** A rule may return structured JSON (e.g.
   `{"add": "innerDrawer", "count": 2}`). A consumer step interprets
   such values, grows the tree, and re-runs `resolve()` for the new

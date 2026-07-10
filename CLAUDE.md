@@ -98,9 +98,13 @@ longer exist.
   `lib/src/resolution_report.dart` (`ResolutionReport` / `ProvenanceEntry`
   / `ProvenanceKind`). Capture is threaded via a null-gated `_Recorder`,
   so `resolve()` pays nothing.
-- ds_slot adapter: a `ResolveRulesFitter` wrapping `resolve()` —
-  needs copy semantics or a transaction story, since `inPlace: true`
-  leaves partial state on error.
+- ds_slot adapter: a `ResolveRulesFitter` wrapping `resolve()`. The
+  transaction story is solved — use `Resolver.resolveAtomic(tree)`,
+  which resolves a copy and writes the result back only on success, so
+  a failed fit leaves the tree untouched (no partial state). Works on
+  `SlotTree` because `SlotTreeData` is an `extension type … implements
+  Json` over pure-JSON data, so it is deepCopy-able and satisfies the
+  resolver's `Tree<T extends Json>`.
 - Performance: profiled and optimized on branch `Performance`
   (2026-07-09). Four evidence-gated wins landed — per-select read
   cache, bounded parsed-query cache in `tree_reader`, single-walk

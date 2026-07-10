@@ -9,6 +9,10 @@ import 'package:gg_tree/gg_tree.dart';
 import 'package:gg_tree_expressions/gg_tree_expressions.dart';
 import 'package:test/test.dart';
 
+/// Mimics ds_slot's `SlotTreeData`: a zero-cost extension type over
+/// `Json`. Guards that `resolveAtomic` works on such trees.
+extension type _JsonNode(Json data) implements Json {}
+
 void main() {
   Tree<Json> node(
     String key,
@@ -215,6 +219,76 @@ void main() {
         expect(hops.first.aliasChain, ['§a']);
         expect(hops.last.value, 42);
         expect(hops.last.aliasChain, ['§a', '§b']);
+      });
+    });
+
+    group('resolveAtomic()', () {
+      final book = {
+        '§w': [
+          {'expression': '1.0 + 2.0'},
+        ],
+      };
+
+      test('should resolve in place, incl. children, and return it', () {
+        final child = node('child', {'cv': ref('§w')});
+        final root = node('root', {'rv': ref('§w')}, [child]);
+        final result = resolver(book).resolveAtomic(root);
+        expect(identical(result, root), isTrue);
+        expect(root.getOrNull<double>('./#rv'), 3.0);
+        // Child data was transplanted; the child node itself is kept.
+        expect(identical(root.childByPath('child'), child), isTrue);
+        expect(child.getOrNull<double>('./#cv'), 3.0);
+      });
+
+      test('should leave the tree untouched on error', () {
+        final root = node('root', {'good': ref('§w'), 'bad': ref('§missing')});
+        expect(
+          () => resolver(book).resolveAtomic(root),
+          throwsA(isA<UnknownRuleException>()),
+        );
+        // Nothing was written back: both references are still present.
+        expect(root.getOrNull<Json>('./#good'), {'§': '§w'});
+        expect(root.getOrNull<Json>('./#bad'), {'§': '§missing'});
+      });
+
+      test('should transplant optional removals', () {
+        final optionalBook = {
+          '§opt': {
+            'optional': true,
+            'variants': [
+              {
+                'selector': {'#nope': true},
+                'expression': '1',
+              },
+            ],
+          },
+        };
+        final root = node('root', {'keep': 1, 'maybe': ref('§opt')});
+        resolver(optionalBook).resolveAtomic(root);
+        expect(root.getOrNull<dynamic>('./#maybe'), isNull);
+        expect(root.getOrNull<dynamic>('./#keep'), 1);
+      });
+
+      test('should require the tree root', () {
+        final root = node('root', {}, [
+          node('child', {'v': ref('§w')}),
+        ]);
+        final e = catchException(
+          () => resolver(book).resolveAtomic(root.childByPath('child')),
+        );
+        expect(e, isA<ResolveException>());
+        expect(e!.message, contains('root'));
+      });
+
+      test('should work on an extension-type-over-Json tree', () {
+        // The ds_slot SlotTree shape: Tree<extension type implements Json>.
+        final tree = Tree<_JsonNode>(
+          key: 'root',
+          data: _JsonNode(<String, dynamic>{'v': ref('§w')}),
+        );
+        final result = resolver(book).resolveAtomic(tree);
+        expect(identical(result, tree), isTrue);
+        expect(tree.getOrNull<double>('./#v'), 3.0);
       });
     });
 

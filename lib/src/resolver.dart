@@ -73,7 +73,8 @@ class Resolver {
   /// a detached subtree copy would silently lose inherited context.
   /// With [inPlace] the tree is mutated directly; this also resolves
   /// a subtree within its full tree. On error the working tree may
-  /// be partially resolved.
+  /// be partially resolved — use [resolveAtomic] for an all-or-nothing
+  /// in-place resolve.
   Tree<T> resolve<T extends Json>(Tree<T> tree, {bool inPlace = false}) =>
       _resolve(tree, inPlace, null);
 
@@ -93,6 +94,44 @@ class Resolver {
     final recorder = _Recorder(rich);
     final resolved = _resolve(tree, inPlace, recorder);
     return (resolved, ResolutionReport(entries: recorder.entries, rich: rich));
+  }
+
+  // ...........................................................................
+  /// Resolves [tree] in place, atomically.
+  ///
+  /// Like `resolve(inPlace: true)` in that [tree] itself is resolved
+  /// and returned — but resolution runs on a copy and its result is
+  /// written back only on success, so on error [tree] is left
+  /// untouched (no partial state). Requires the tree root, like copy
+  /// mode.
+  ///
+  /// Use this from a pipeline step that must mutate the tree it is
+  /// handed (e.g. a fitter) yet stay all-or-nothing on failure.
+  Tree<T> resolveAtomic<T extends Json>(Tree<T> tree) {
+    final resolved = _resolve(tree, false, null);
+    _adoptData(tree, resolved);
+    return tree;
+  }
+
+  /// Copies [resolved]'s node data onto [original] in lockstep.
+  ///
+  /// Resolution only ever changes node data — replaced values and
+  /// removed optional keys — never the node structure, so the two
+  /// trees are structurally identical here. `clear` before `addAll`
+  /// so optional-removal keys do not linger.
+  void _adoptData<T extends Json>(Tree<T> original, Tree<T> resolved) {
+    original.data
+      ..clear()
+      ..addAll(resolved.data);
+    final originalChildren = original.children.toList();
+    final resolvedChildren = resolved.children.toList();
+    assert(
+      originalChildren.length == resolvedChildren.length,
+      'resolution changed the tree structure',
+    );
+    for (var i = 0; i < originalChildren.length; i++) {
+      _adoptData(originalChildren[i], resolvedChildren[i]);
+    }
   }
 
   Tree<T> _resolve<T extends Json>(
