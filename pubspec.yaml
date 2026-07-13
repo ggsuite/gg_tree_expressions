@@ -1,19 +1,19 @@
 name: gg_tree_expressions
 description: Assign expressions to gg_tree properties and connect rule books with ease
-version: 1.0.0
+version: 1.0.1
 repository: https://github.com/ggsuite/gg_tree_expressions.git
 
 environment:
   sdk: ">=3.11.4 <4.0.0"
 
 dependencies:
-  gg_json: ^3.2.0
-  gg_tree: ^2.5.0
+  gg_json: ^4.0.1
+  gg_tree: ^2.6.1
 
   antlr4: ^4.13.2
   cel: ^0.5.4+1
 
 dev_dependencies:
-  coverage: ^1.15.0
+  coverage: ^1.15.1
   lints: ^6.1.0
   test: ^1.31.2

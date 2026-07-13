@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.0.1] - 2026-07-13
+
+### Changed
+
+- Update dependencies
+
 ## [1.0.0] - 2026-07-10
 
 ### Added
@@ -68,6 +74,7 @@ pinning the supported cross-language subset.
 
 - Initial boilerplate.
 
+[1.0.1]: https://github.com/ggsuite/gg_tree_expressions/compare/1.0.0...1.0.1
 [1.0.0]: https://github.com/ggsuite/gg_tree_expressions/compare/0.3.0...1.0.0
 [0.3.0]: https://github.com/ggsuite/gg_tree_expressions/compare/0.2.0...0.3.0
 [0.2.0]: https://github.com/ggsuite/gg_tree_expressions/compare/0.1.0...0.2.0
