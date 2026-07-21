@@ -36,7 +36,7 @@ void main() {
       ];
     }
     return switch (roll % 6) {
-      0 => {'§': '§rule'},
+      0 => {'§': 'rule'},
       1 => {'§expression': '1.0'},
       2 => random.nextInt(100),
       3 => 'text${random.nextInt(3)}',

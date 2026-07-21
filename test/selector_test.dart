@@ -4,6 +4,7 @@
 // Use of this source code is governed by terms that can be
 // found in the LICENSE file in the root of this package.
 
+import 'package:gg_golden/gg_golden.dart';
 import 'package:gg_json/gg_json.dart';
 import 'package:gg_tree/gg_tree.dart';
 import 'package:gg_tree_expressions/gg_tree_expressions.dart';
@@ -19,7 +20,7 @@ void main() {
   group('Selector', () {
     group('fromJson()', () {
       test('should return none for null', () {
-        final selector = Selector.fromJson(null, context: 'rule "§x"');
+        final selector = Selector.fromJson(null, context: 'rule "x"');
         expect(selector, same(Selector.none));
         expect(selector.specificity, 0);
       });
@@ -29,7 +30,7 @@ void main() {
           'theme#id': 'dark',
           '#width': 380.0,
           './#visible': true,
-        }, context: 'rule "§x"');
+        }, context: 'rule "x"');
         expect(selector.specificity, 3);
         expect(selector.conditions['theme#id'], 'dark');
       });
@@ -37,23 +38,23 @@ void main() {
       test('should throw when json is no map', () {
         var message = '';
         try {
-          Selector.fromJson('dark', context: 'rule "§x"');
+          Selector.fromJson('dark', context: 'rule "x"');
         } on TreeExpressionsException catch (e) {
           message = e.message;
         }
-        expect(message, contains('selector in rule "§x"'));
+        expect(message, contains('selector in rule "x"'));
         expect(message, contains('must be a JSON object'));
       });
 
       test('should throw on invalid queries', () {
         var message = '';
         try {
-          Selector.fromJson({'a#b#c': 1}, context: 'rule "§x"');
+          Selector.fromJson({'a#b#c': 1}, context: 'rule "x"');
         } on TreeExpressionsException catch (e) {
           message = e.message;
         }
         expect(message, contains('Invalid query "a#b#c"'));
-        expect(message, contains('the selector of rule "§x"'));
+        expect(message, contains('the selector of rule "x"'));
       });
 
       test('should throw on non-scalar literals', () {
@@ -61,7 +62,7 @@ void main() {
         try {
           Selector.fromJson({
             '#tags': ['a'],
-          }, context: 'rule "§x"');
+          }, context: 'rule "x"');
         } on TreeExpressionsException catch (e) {
           message = e.message;
         }
@@ -72,7 +73,7 @@ void main() {
       test('should throw on null literals with a hint', () {
         var message = '';
         try {
-          Selector.fromJson({'#a': null}, context: 'rule "§x"');
+          Selector.fromJson({'#a': null}, context: 'rule "x"');
         } on TreeExpressionsException catch (e) {
           message = e.message;
         }
@@ -85,6 +86,17 @@ void main() {
         final json = {'theme#id': 'dark', '#w': 2};
         final selector = Selector.fromJson(json, context: 'x');
         expect(selector.toJson(), json);
+      });
+    });
+
+    group('example()', () {
+      test('serializes the example selector (golden)', () async {
+        final json = Selector.example().toJson();
+        await writeGolden('selector_example.json', json);
+
+        expect(json, {'theme#id': 'dark', '#platform': 'mobile'});
+        expect(Selector.example().specificity, 2);
+        expect(Selector.fromJson(json, context: 'example').toJson(), json);
       });
     });
 
@@ -145,7 +157,7 @@ void main() {
 
       test('should block on unresolved values', () {
         final me = node('me', {
-          'w': const {'§': '§width'},
+          'w': const {'§': 'width'},
         });
         final selector = Selector.fromJson({'./#w': 2}, context: 'x');
         final result = selector.match(me);
@@ -174,6 +186,15 @@ void main() {
           expect(selector.match(me, readCache: cache), isA<MatchSuccess>());
         });
       });
+    });
+  });
+
+  group('MatchFailure', () {
+    test('uses an explicit reason when constructed with one', () {
+      const failure = MatchFailure.reason('"when" predicate is false');
+      expect(failure.reason, '"when" predicate is false');
+      expect(failure.query, '');
+      expect(failure.actual, isNull);
     });
   });
 }

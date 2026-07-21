@@ -1,0 +1,94 @@
+{
+  "rich": true,
+  "entries": [
+    {
+      "location": "/tall#shelves",
+      "kind": "rule",
+      "ruleKey": "shelfCount",
+      "variantIndex": 1,
+      "value": 4,
+      "selector": {},
+      "when": "h > 2000.0",
+      "inputs": {
+        "h": 2400.0
+      },
+      "expression": "4",
+      "aliasChain": [
+        "shelfCount"
+      ]
+    },
+    {
+      "location": "/tall#isCompact",
+      "kind": "rule",
+      "ruleKey": "compact",
+      "variantIndex": 0,
+      "value": false,
+      "selector": {},
+      "inputs": {},
+      "expression": "false",
+      "aliasChain": [
+        "compact"
+      ]
+    },
+    {
+      "location": "/short#shelves",
+      "kind": "rule",
+      "ruleKey": "shelfCount",
+      "variantIndex": 0,
+      "value": 1,
+      "selector": {},
+      "inputs": {},
+      "expression": "1",
+      "aliasChain": [
+        "shelfCount"
+      ]
+    },
+    {
+      "location": "/short#isCompact",
+      "kind": "rule",
+      "ruleKey": "compact",
+      "variantIndex": 1,
+      "value": true,
+      "selector": {},
+      "when": "h < 800.0 || w > 1200.0",
+      "inputs": {
+        "h": 700.0,
+        "w": 600.0
+      },
+      "expression": "true",
+      "aliasChain": [
+        "compact"
+      ]
+    },
+    {
+      "location": "/wide#shelves",
+      "kind": "rule",
+      "ruleKey": "shelfCount",
+      "variantIndex": 0,
+      "value": 1,
+      "selector": {},
+      "inputs": {},
+      "expression": "1",
+      "aliasChain": [
+        "shelfCount"
+      ]
+    },
+    {
+      "location": "/wide#isCompact",
+      "kind": "rule",
+      "ruleKey": "compact",
+      "variantIndex": 1,
+      "value": true,
+      "selector": {},
+      "when": "h < 800.0 || w > 1200.0",
+      "inputs": {
+        "h": 1500.0,
+        "w": 1400.0
+      },
+      "expression": "true",
+      "aliasChain": [
+        "compact"
+      ]
+    }
+  ]
+}

@@ -69,6 +69,11 @@ class RuleInput {
     ]);
   }
 
+  /// An example input (long form) reading `screen#width`, defaulting to
+  /// `4.0`. The short form is just the query string (e.g. `'#width'`).
+  factory RuleInput.example() =>
+      RuleInput(query: 'screen#width', defaultValue: 4.0, hasDefault: true);
+
   /// The tree query bound to the CEL identifier.
   final String query;
 

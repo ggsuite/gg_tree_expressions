@@ -3,20 +3,24 @@
 Rule/expression system for gg_tree: tree values reference JSON-defined
 rules whose CEL expressions evaluate in node context; one
 `Resolver.resolve()` answers everything. Generic OSS package
-(ggsuite), no ds_*/CARAT dependencies.
+(ggsuite), no domain-specific dependencies.
 
 **Read `doc/architecture.md` first** — §12 has the decision log
-(D1–D11), §13 the implementation decisions, corrections, and the two
-post-review revisions (§13.4 review fixes, §13.5 format revision).
-Do not trust older material (blog post "Regeln im SlotTree",
+(D1–D14), §13 the implementation decisions, corrections, and the
+post-review revisions (§13.4 review fixes, §13.5/§13.6 format
+revisions, §13.7 ambiguous-tie error, §13.8 `when` predicate).
+Do not trust older material (an older internal blog post,
 pre-§13.5 docs): it shows `"§name"` **string** references, which no
-longer exist.
+longer exist. Pre-§13.6 material keys rules with a leading `§`
+(`"§ruleName"`); that prefix is gone — rule keys are now plain
+identifiers.
 
 ## Format essentials (post §13.5)
 
-- Reference = map `{"§": "§ruleName"}` (single reserved key, value =
-  rule key verbatim). Inline expression = `{"§expression": …,
-  "§inputs": {…}}`.
+- Reference = map `{"§": "ruleName"}` (single reserved key `§`, value =
+  rule key verbatim). Rule keys are plain identifiers matching
+  `^[a-zA-Z][a-zA-Z0-9_]*$` — **no `§` prefix** (dropped §13.6). Inline
+  expression = `{"§expression": …, "§inputs": {…}}`.
 - **Strings are always data.** `"§name"` is never a reference; there
   is no escaping mechanism. Map keys starting with `§` are reserved;
   a marker map matching no known form fails with a clear error.
@@ -24,6 +28,15 @@ longer exist.
   the reader. Do not reintroduce state-dependent blocking (an
   `isPending` predicate existed briefly and was deliberately
   removed).
+- Selection: highest-specificity matching variant wins; a
+  same-specificity tie among matches is an `AmbiguousVariantException`
+  (no order-based tie-break — D2 reversed by D13/§13.7, so authors must
+  disambiguate).
+- Variant `when` (§13.8): an optional CEL bool predicate beside the
+  equality `selector`; both must hold. Effective specificity is
+  `2*conditions + (when?1:0)`, so a `when` breaks same-count ties and
+  beats the base; it gives ranges/OR that equality can't. Shares the
+  variant's `inputs`; `when`-free books behave exactly as before.
 - All errors are subtypes of the sealed `TreeExpressionsException`
   (typed fields; tests should assert types, not only message text).
 
@@ -86,6 +99,21 @@ longer exist.
   misdetects the charset — check bytes (`0xC2 0xA7`) before
   "fixing", and never convert, only reload as UTF-8.
 
+## Examples & goldens
+
+- Each core data-model class has a `factory X.example()`
+  (`RuleBook`/`Rule`/`RuleVariant`/`RuleInput`/`Selector`), composed
+  like `Slot.example()` builds on `Size.example()`. They double as the
+  readable shape spec and the golden source, anchored on the doc's
+  `borderWidth` example.
+- Mirror tests snapshot `example().toJson()` via gg_golden
+  `writeGolden` under `test/goldens/<file>/`; `resolver_test` adds an
+  end-to-end golden (resolved tree + rich `ResolutionReport`).
+- gg_golden's `writeGolden` **always overwrites** — a regression shows
+  up as a `git diff` on `test/goldens/`, never a red test. Review that
+  diff after any change to a model, its `toJson`, or resolution
+  behaviour.
+
 ## Open items
 
 - Verbose/provenance mode (which rule/variant produced each value) —
@@ -93,18 +121,18 @@ longer exist.
   {inPlace, rich})` returns `(Tree<T>, ResolutionReport)`; `resolve()` is
   untouched (the tree stays clean — no sidecar keys, so all invariants
   hold). Report is minimal by default (location, kind, rule key, variant
-  index, value); `rich: true` adds the winning selector, bound inputs,
-  expression source, and alias chain. One entry per alias hop.
+  index, value); `rich: true` adds the winning selector, its `when`
+  predicate, bound inputs, expression source, and alias chain. One entry
+  per alias hop.
   `lib/src/resolution_report.dart` (`ResolutionReport` / `ProvenanceEntry`
   / `ProvenanceKind`). Capture is threaded via a null-gated `_Recorder`,
   so `resolve()` pays nothing.
-- ds_slot adapter: a `ResolveRulesFitter` wrapping `resolve()`. The
-  transaction story is solved — use `Resolver.resolveAtomic(tree)`,
-  which resolves a copy and writes the result back only on success, so
-  a failed fit leaves the tree untouched (no partial state). Works on
-  `SlotTree` because `SlotTreeData` is an `extension type … implements
-  Json` over pure-JSON data, so it is deepCopy-able and satisfies the
-  resolver's `Tree<T extends Json>`.
+- Consumer adapter: **shipped** — a consumer's pipeline step wraps
+  `resolveAtomic` (optional book; skips marker-free trees so their
+  data-map key order stays byte-stable) and `resolveVerbose` behind an
+  `onReport` callback. Downstream wiring lives in the consumer packages
+  (their layout chain, config rule-book / rule-writes, and request
+  wire + validate-rules dry-run).
 - Performance: profiled and optimized on branch `Performance`
   (2026-07-09). Four evidence-gated wins landed — per-select read
   cache, bounded parsed-query cache in `tree_reader`, single-walk

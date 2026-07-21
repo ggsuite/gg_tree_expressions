@@ -6,6 +6,8 @@ expression system, plus an implementation roadmap and the list of
 decisions that are still open. §13 records the decisions taken at
 implementation start and the corrections that came out of verifying
 the dependency APIs (`gg_tree` 2.3.1, `gg_json` 3.1.1, `cel` 0.5.4+1).
+Latest revisions: §13.6 (rule names drop the `§` prefix), §13.7
+(same-specificity ties are an error), §13.8 (optional `when` predicate).
 
 ---
 
@@ -31,8 +33,8 @@ Domain semantics (what the resolved values *mean*) belong to consumers.
 
 ## 2. Evaluation of the planning input
 
-The planning (see the internal "Regeln im SlotTree" post) holds up well
-against the actual `gg_tree` 2.3.1 / `ds_slot` APIs. Findings from the
+The original planning holds up well against the actual `gg_tree` 2.3.1
+API. Findings from the
 code review that refine it:
 
 | Planning statement | Assessment |
@@ -43,7 +45,7 @@ code review that refine it:
 | Selectors (formerly "tags") pick rule variants per manufacturer/catalog/… | Modeled as tree-query → literal equality conditions. Works because step 1 of the strategy (standardized tree) guarantees the queried paths exist. In this package that standardization is a *consumer contract*, not code. |
 | CEL as engine; rules also producible from JavaScript | `cel` 0.5.4+1 (Dart) and `@bufbuild/cel` (TS) both implement the CEL spec. Keeping expressions inside the common subset + shared JSON test fixtures gives cross-language parity. |
 | Existing CEL usage (`showIf` in a downstream package) | Works, but substitutes query results into the expression *source* via regex and recompiles per evaluation (its compile cache is keyed inconsistently and rarely hits). This package instead compiles each expression **once** and binds inputs per evaluation through CEL's activation map. |
-| Rule results: variables, growth instructions, fitter control | Only **values** are in scope here. Growth and processing-step control are consumer interpretations of resolved values (see §9). The resolver is deliberately re-runnable so consumers can loop resolve → grow → resolve. |
+| Rule results: variables, growth instructions, processing-step control | Only **values** are in scope here. Growth and processing-step control are consumer interpretations of resolved values (see §9). The resolver is deliberately re-runnable so consumers can loop resolve → grow → resolve. |
 
 ---
 
@@ -69,7 +71,7 @@ A rule book is a JSON object. Every top-level key is a rule key and
 must match:
 
 ```
-^§[a-zA-Z][a-zA-Z0-9_]*$        (camelCase preferred)
+^[a-zA-Z][a-zA-Z0-9_]*$         (camelCase preferred)
 ```
 
 Every value is a **list of variants**. A variant without a selector is
@@ -79,7 +81,7 @@ plain concatenation per key.
 
 ```jsonc
 {
-  "§borderWidth": [
+  "borderWidth": [
     {
       // Base definition: applies everywhere.
       "expression": "1.0"
@@ -105,8 +107,9 @@ plain concatenation per key.
 | Field | Type | Required | Meaning |
 |---|---|---|---|
 | `expression` | string (CEL) | yes | Computes the rule result from the bound inputs. |
-| `selector` | object: treeQuery → literal | no | Conditions for this variant to apply. Absent/empty = base variant. |
-| `inputs` | object: identifier → query | no | Binds CEL identifiers to tree queries. Identifier must be a valid CEL identifier; query uses `gg_tree` query syntax. |
+| `selector` | object: treeQuery → literal | no | Equality conditions for this variant to apply. Absent/empty = base variant. |
+| `when` | string (CEL) | no | A predicate (must evaluate to bool) that must also hold for the variant to apply. Reads tree values through the same `inputs` as `expression`; enables ranges/comparisons/OR that equality selectors cannot. See §4.4 for specificity, §13.8. |
+| `inputs` | object: identifier → query | no | Binds CEL identifiers to tree queries, shared by `when` and `expression`. Identifier must be a valid CEL identifier; query uses `gg_tree` query syntax. |
 | `description` | string | no | Documentation only. |
 
 Input values (long form) may declare a default used when the query
@@ -140,12 +143,19 @@ fast, with node path + query in the message).
 
 When several variants of the same rule match a node:
 
-1. **Specificity wins**: the variant with the most selector conditions
-   is chosen (CSS-like). Base variant has specificity 0.
-2. **Ties**: the variant that appears **later** in the merged rule book
-   wins. Merge order is defined by the caller
-   (`RuleBook.merge([general, …, specific])`), so "later" means "from
-   the more specific book" — e.g. global → vendor → catalog → item.
+1. **Specificity wins**: the variant with the highest **effective
+   specificity** — `2 * selectorConditions + (when != null ? 1 : 0)` —
+   is chosen. So more selector conditions win outright (CSS-like), and
+   a `when` breaks ties among variants with the same condition count
+   (a `when`-variant beats the otherwise-identical one, including the
+   base). Base variant has specificity 0. For books without `when` this
+   is exactly the old condition-count order (§13.8).
+2. **Ties are an error**: if two or more variants match at that same
+   highest specificity, resolution fails with an
+   `AmbiguousVariantException` naming the rule, node, specificity, and
+   the tied variants. The resolver never guesses by order — selectors
+   must be specific enough that exactly one wins. (Supersedes the
+   original "later wins" tie-break of D2; see §13.7.)
 
 If **no** variant matches (all variants carry selectors, none applies),
 resolution fails with a diagnostic listing the rule, node path, and the
@@ -155,7 +165,7 @@ base variant. (An `optional` flag is an open question, §11.)
 ### 4.5 References in tree data
 
 - A reference is a string value exactly matching the rule-key pattern:
-  `"§borderWidth"`. It may sit at any depth inside a node's data map
+  `"borderWidth"`. It may sit at any depth inside a node's data map
   (nested maps and list elements included).
 - Strings starting with `§` that do **not** match the pattern (e.g.
   `"§ 5 Abs. 2"`) are ordinary literals and never touched.
@@ -172,7 +182,7 @@ Example tree (generic UI-configurator flavor):
 app                     data: { platform: "mobile" }
 ├─ theme                data: { id: "dark" }
 ├─ screen               data: { width: 380.0 }
-└─ dialog               data: { borderWidth: "§borderWidth" }
+└─ dialog               data: { borderWidth: "borderWidth" }
    └─ okButton          data: { }
 ```
 
@@ -286,18 +296,19 @@ alternatives.
 class RuleBook {
   factory RuleBook.fromJson(Json json);
   factory RuleBook.merge(Iterable<RuleBook> booksInAscendingPriority);
-  Rule? ruleForKey(String key);        // '§borderWidth'
+  Rule? ruleForKey(String key);        // 'borderWidth'
   Json toJson();
 }
 
 class Rule {
-  final String key;                    // with § prefix
+  final String key;                    // plain identifier, no prefix
   final List<RuleVariant> variants;
-  RuleVariant? select(Tree<Json> node);
+  SelectResult select(Tree<Json> node, {WhenEvaluator? evaluateWhen});
 }
 
 class RuleVariant {
   final Selector selector;             // Selector.none for base
+  final String? when;                  // optional CEL bool predicate
   final Map<String, RuleInput> inputs;
   final String expression;
   final String? description;
@@ -335,8 +346,9 @@ Notes:
   knowledge. Result writes mutate the working copy's data containers
   directly, which also covers references inside lists (where
   path-based `set` has no index syntax).
-- `RuleBook.merge` takes books in ascending priority; later books win
-  specificity ties (§4.4).
+- `RuleBook.merge` takes books in ascending priority; a later book
+  overrides an earlier one only with a more specific variant — a
+  same-specificity tie is an error, not resolved by order (§4.4/§13.7).
 - `resolveRule` exists for tooling and tests (evaluate one rule at one
   node without a tree sweep).
 
@@ -391,9 +403,9 @@ How the generic package serves the original planning goals — none of
 this lives in this repository:
 
 - **Processing-step wrapper.** Consumers with a step-chain concept
-  (e.g. a `Fitter` in `ds_slot`) wrap `Resolver.resolve` as one step in
+  (e.g. a pipeline step) wrap `Resolver.resolve` as one step in
   their pipeline, positioned after the standardized tree is built and
-  before steps that consume the resolved variables. A fitter that must
+  before steps that consume the resolved variables. A step that must
   mutate the tree it is handed yet stay all-or-nothing on error uses
   `Resolver.resolveAtomic(tree)` (added 2026-07-10): it resolves a copy
   and writes the result back only on success, so a failed fit leaves
@@ -472,12 +484,12 @@ depends on both.
    list elements) vs. routing through `Tree.set` (re-enforces subclass
    key gates, but no list-index syntax). Possibly: direct mutation +
    an optional post-write validation hook.
-7. **Selector expressiveness.** Equality-only selectors cover the
-   planned dimensions (vendor, catalog, item type, …) but not ranges
-   (dates!). Likely v2: an optional `when` field holding a CEL
-   predicate as an alternative/addition to the equality map. Interim
-   workaround: put the date into the tree and branch inside the rule
-   *expression*.
+7. **Selector expressiveness.** _Resolved (2026-07-21) — implemented as
+   the optional `when` CEL predicate on a variant; see §13.8._
+   Equality-only selectors covered the planned dimensions (vendor,
+   catalog, item type, …) but not ranges (dates!). The `when` field
+   holds a CEL predicate alongside the equality map, giving ranges,
+   comparisons, and OR (`a || b`).
 8. **Result typing.** Optional `resultType` field per rule for
    validation (`number`, `string`, `bool`, `json`)? v1: untyped.
 9. **Provenance / debugging.** _Resolved (2026-07-09) — implemented
@@ -487,8 +499,8 @@ depends on both.
    `(Tree<T>, ResolutionReport)`; `resolve()` is unchanged and pays
    nothing (capture is a null-gated recorder). Minimal by default
    (location, kind, rule key, variant index, value); `rich: true` adds
-   the winning selector, bound inputs, expression source, and alias
-   chain. See `lib/src/resolution_report.dart`.
+   the winning selector, its `when` predicate, bound inputs, expression
+   source, and alias chain. See `lib/src/resolution_report.dart`.
 10. **Namespacing.** Rule keys are flat camelCase. If rule books grow
     large, dotted namespaces (`§geometry.panelWidth`) may be worth the
     added key-pattern complexity.
@@ -536,6 +548,9 @@ depends on both.
 | D9 | Inline expressions in tree data via `§`-marked variant maps. | Team decision, 2026-07-06 |
 | D10 | `§§` escaping, unescaped at resolve time. | Team decision, 2026-07-06 |
 | D11 | Growth stays consumer-side (values-only results). | Team decision, 2026-07-06 |
+| D12 | Rule names are plain identifiers (no `§` prefix); `§` is only the structural reference/inline map key. | Team decision, 2026-07-21 |
+| D13 | Same-specificity ties among matching variants are an error (`AmbiguousVariantException`), never resolved by order — supersedes D2's later-wins tie-break. | Team decision, 2026-07-21 |
+| D14 | Optional `when` CEL predicate per variant (bool); effective specificity `2 * conditions + (when ? 1 : 0)`; shares the variant's inputs; resolves §11.7. | Team decision, 2026-07-21 |
 
 ---
 
@@ -612,8 +627,8 @@ depends on both.
   bool/num/map throws. `Tree.set` is therefore unusable for result
   writes; the resolver writes `parent[key] = result` inside
   `Json.visit`, which is explicitly mutation-safe. Direct data
-  mutation breaks no gg_tree/ds_slot invariant (no listeners, no hash
-  caches; ds_slot's own typed setters mutate directly).
+  mutation breaks no gg_tree invariant (no listeners, no hash
+  caches; a consumer's own typed setters mutate directly).
 - **`cel` 0.5.4+1 swallows syntax errors.** Bad sources compile to a
   `StringLiteralExpr('<<error>>')` subtree and misbehave only at
   eval. `CompiledExpression` must scan the compiled AST for
@@ -718,3 +733,87 @@ escaping of D10):
   purity, idempotency, and order-independence over random books and
   trees. Its first run immediately caught an off-by-one-index
   blocker-location bug — the harness pays for itself.
+
+### 13.6 Format revision: rule keys drop the `§` prefix (2026-07-21)
+
+The leading `§` on rule **names** was removed (supersedes the key
+pattern of §4.1 and the reference value form of §13.5): a reference is
+now `{"§": "ruleName"}`, and rule books key rules as `"ruleName"`.
+
+- **Rule keys match `^[a-zA-Z][a-zA-Z0-9_]*$`** — a plain identifier
+  with no leading `§`. The reference value holds that key verbatim, so
+  `{"§": "borderWidth"}` looks up rule `borderWidth`.
+- **The prefix was redundant post-§13.5.** Once references became
+  shape-based maps (`{"§": …}`), the `§` on the name did no detection
+  or disambiguation — `isReference`/`isMarker` key on the reserved `§`
+  map key, never on the name. It survived only as a validation
+  constraint; dropping it removes the doubled `§` in
+  `{"§": "§ruleName"}` with no ambiguity.
+- **Unchanged:** the structural reserved keys `§`, `§expression`, and
+  `§inputs`; strings are always data; every detection primitive.
+- **Consumers migrated in lockstep** (downstream rule-book fixtures and
+  a consumer's resolver-adapter docstring). No consumer code touched
+  the prefix — it lived only in authored data.
+
+### 13.7 Semantics revision: same-specificity ties are an error (2026-07-21)
+
+The tie-break of D2 / §4.4 (on equal specificity, the later variant
+wins) was removed. When two or more variants match a node at the same
+highest specificity, `Rule.select` returns `SelectAmbiguous` and the
+resolver throws `AmbiguousVariantException` (naming the rule, node,
+specificity, and tied variants).
+
+- **Rationale.** Order-based tie-breaking silently resolves an
+  ambiguous authoring setup; erroring instead pushes authors to make
+  selectors specific enough that exactly one variant wins.
+- **Scope.** Every tie errors, including two base variants
+  (specificity 0) and same-specificity overlaps across merged books —
+  `RuleBook.merge` no longer resolves ties by order. A normal rule
+  (one base + strictly more-specific overrides) never ties.
+- **Blocking interaction.** A blocked variant at or above the winning
+  specificity now defers selection (once resolved it might win or add
+  to a tie), so ambiguity is judged only on fully-resolved values.
+- **Lint.** `RuleBook.lint()`'s "identical selectors within one rule"
+  finding now warns that a matching node resolves ambiguously (rather
+  than "the later variant wins").
+
+### 13.8 Feature: the `when` selector predicate (2026-07-21)
+
+An optional `when` CEL predicate on a variant (resolves open question
+§11.7). A variant applies when its equality `selector` matches **and**
+its `when` (if present) evaluates to `true`.
+
+- **Effective specificity** `2 * selectorConditions + (when ? 1 : 0)`
+  ranks variants: more conditions win outright; a `when` breaks ties
+  among equal condition counts (so `when` lifts a variant above the
+  otherwise-identical one, including the base). Backward-compatible —
+  for `when`-free books this is exactly the old condition-count order,
+  so no behavior or ambiguity change.
+- **OR/ranges for free.** `when: "a || b"`, `"h < 2000.0"`,
+  `"n >= 3 && m != 4"` — anything in the CEL subset. A dedicated OR
+  selector syntax is therefore unnecessary.
+- **Tier-by-tier selection.** `Rule.select` matches selectors first,
+  then walks effective-specificity tiers from the highest down and
+  evaluates `when` only within the tier under consideration. So a
+  variant that cannot win (lower effective specificity than an applying
+  one) never has its `when` evaluated — a broken `when` on a dominated
+  variant cannot abort resolution. This mirrors the spec-awareness the
+  blocked path already had, and is order-independent within a tier.
+- **Shared inputs.** `when` reads tree values through the same `inputs`
+  map as `expression`. When a `when` *is* evaluated (its variant is in
+  a still-winnable tier), a blocked input defers selection (`when` is
+  judged only on resolved values); a missing input without a default
+  is an error; a non-bool result is an error. `when` sources compile
+  eagerly at `Resolver` construction. Caveat: because inputs are shared,
+  an evaluated variant defers/errors on *any* of its declared inputs —
+  even one only its `expression` uses — so declare per variant only the
+  inputs it needs.
+- **Ambiguity composes (D13).** Two variants applying at the same
+  effective specificity error, so `when` predicates used to
+  *partition* (mutually exclusive) never conflict, while genuinely
+  overlapping ones are reported. Guidance: for "either condition ⇒ same
+  result" use one variant with `when: "a || b"`; for different results,
+  keep the predicates mutually exclusive.
+- **Selection wiring.** `Rule.select` takes an injected `WhenEvaluator`
+  (supplied by the resolver) so it needs no CEL dependency; a false
+  `when` yields `MatchFailure.reason`, a blocked one `MatchBlocked`.

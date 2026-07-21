@@ -35,6 +35,7 @@ class ProvenanceEntry {
     this.variantIndex,
     this.value,
     this.selector,
+    this.when,
     this.inputs,
     this.expression,
     this.aliasChain,
@@ -61,6 +62,10 @@ class ProvenanceEntry {
   /// base variant); null otherwise.
   final Map<String, Object>? selector;
 
+  /// Rich only: the winning variant's `when` predicate, or null when the
+  /// variant has none (or in minimal mode).
+  final String? when;
+
   /// Rich only: the inputs bound for the expression (name → value).
   final Map<String, Object?>? inputs;
 
@@ -85,6 +90,7 @@ class ProvenanceEntry {
         : '= $value';
     final detail = <String>[
       if (selector != null && selector!.isNotEmpty) 'selector $selector',
+      if (when != null) 'when "$when"',
       if (inputs != null && inputs!.isNotEmpty) 'inputs $inputs',
       if (expression != null) 'expr "$expression"',
       if (aliasChain != null && aliasChain!.length > 1)
@@ -102,6 +108,7 @@ class ProvenanceEntry {
     if (variantIndex != null) 'variantIndex': variantIndex,
     if (kind != ProvenanceKind.optionalRemoval) 'value': value,
     if (selector != null) 'selector': selector,
+    if (when != null) 'when': when,
     if (inputs != null) 'inputs': inputs,
     if (expression != null) 'expression': expression,
     if (aliasChain != null) 'aliasChain': aliasChain,

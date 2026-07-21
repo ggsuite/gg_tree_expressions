@@ -10,24 +10,24 @@ import 'package:test/test.dart';
 void main() {
   group('isRuleKey()', () {
     test('should accept valid rule keys', () {
-      expect(isRuleKey('§borderWidth'), isTrue);
-      expect(isRuleKey('§a'), isTrue);
-      expect(isRuleKey('§a1_b2'), isTrue);
+      expect(isRuleKey('borderWidth'), isTrue);
+      expect(isRuleKey('a'), isTrue);
+      expect(isRuleKey('a1_b2'), isTrue);
     });
 
     test('should reject invalid rule keys', () {
-      expect(isRuleKey('borderWidth'), isFalse);
-      expect(isRuleKey('§'), isFalse);
-      expect(isRuleKey('§9abc'), isFalse);
-      expect(isRuleKey('§ 5 Abs. 2'), isFalse);
-      expect(isRuleKey('§§name'), isFalse);
-      expect(isRuleKey('§a.b'), isFalse);
+      expect(isRuleKey('§borderWidth'), isFalse); // the § prefix is gone
+      expect(isRuleKey(''), isFalse);
+      expect(isRuleKey('9abc'), isFalse);
+      expect(isRuleKey('a b'), isFalse);
+      expect(isRuleKey('a.b'), isFalse);
+      expect(isRuleKey('a-b'), isFalse);
     });
   });
 
   group('isReference()', () {
     test('should accept maps with the § key', () {
-      expect(isReference({'§': '§borderWidth'}), isTrue);
+      expect(isReference({'§': 'borderWidth'}), isTrue);
     });
 
     test('should reject everything else', () {
@@ -55,7 +55,7 @@ void main() {
     });
 
     test('should reject everything else', () {
-      expect(isInlineExpression({'§': '§x'}), isFalse);
+      expect(isInlineExpression({'§': 'x'}), isFalse);
       expect(isInlineExpression('§expression'), isFalse);
       expect(isInlineExpression(null), isFalse);
     });
@@ -63,7 +63,7 @@ void main() {
 
   group('isMarker()', () {
     test('should accept any map with a §-prefixed key', () {
-      expect(isMarker({'§': '§x'}), isTrue);
+      expect(isMarker({'§': 'x'}), isTrue);
       expect(isMarker({'§expression': '1'}), isTrue);
       expect(isMarker({'§expresion': '1'}), isTrue); // typo — caught
       expect(isMarker({'a': 1, '§b': 2}), isTrue);
@@ -87,7 +87,7 @@ void main() {
           'cfg': {
             'sizes': [
               1,
-              {'§': '§w'},
+              {'§': 'w'},
             ],
           },
         }),
@@ -103,7 +103,7 @@ void main() {
 
     test('should treat markers as atomic', () {
       // The reference key inside is not scanned separately.
-      expect(containsMarker({'§': '§w'}), isTrue);
+      expect(containsMarker({'§': 'w'}), isTrue);
     });
 
     test('should reject marker-free values', () {

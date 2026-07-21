@@ -25,7 +25,17 @@ class MatchSuccess extends MatchResult {
 /// A condition failed.
 class MatchFailure extends MatchResult {
   /// Creates the result for the first failing condition.
-  const MatchFailure(this.query, this.expected, this.actual);
+  const MatchFailure(this.query, this.expected, this.actual)
+    : _reasonOverride = null;
+
+  /// Creates a failure with an explicit [reason] — used when the failure
+  /// is not an equality condition (e.g. a `when` predicate evaluating to
+  /// false).
+  const MatchFailure.reason(String reason)
+    : query = '',
+      expected = '',
+      actual = null,
+      _reasonOverride = reason;
 
   /// The query of the failing condition.
   final String query;
@@ -36,10 +46,14 @@ class MatchFailure extends MatchResult {
   /// The value found, or null when the query resolved to nothing.
   final Object? actual;
 
+  final String? _reasonOverride;
+
   /// A human-readable failure description.
-  String get reason => actual == null
-      ? 'condition "$query == $expected" failed: no value found'
-      : 'condition "$query == $expected" failed: found "$actual"';
+  String get reason =>
+      _reasonOverride ??
+      (actual == null
+          ? 'condition "$query == $expected" failed: no value found'
+          : 'condition "$query == $expected" failed: found "$actual"');
 }
 
 /// A condition read a still-unresolved value; matching must be
@@ -96,6 +110,10 @@ class Selector {
 
   /// The empty selector matching everywhere (base variant).
   static final Selector none = Selector(const {});
+
+  /// An example selector matching dark-mode mobile contexts.
+  factory Selector.example() =>
+      Selector({'theme#id': 'dark', '#platform': 'mobile'});
 
   /// The conditions: tree query → expected scalar literal.
   final Map<String, Object> conditions;

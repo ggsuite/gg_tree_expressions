@@ -30,31 +30,43 @@ void main() {
 
       final unknown = UnknownRuleException(
         ['x'],
-        ruleKey: '§a',
+        ruleKey: 'a',
         location: '/#x',
-        suggestions: ['§ab'],
+        suggestions: ['ab'],
       );
-      expect(unknown.ruleKey, '§a');
+      expect(unknown.ruleKey, 'a');
       expect(unknown.location, '/#x');
-      expect(unknown.suggestions, ['§ab']);
+      expect(unknown.suggestions, ['ab']);
 
       final circular = CircularAliasException(
         ['x'],
-        chain: ['§a', '§b', '§a'],
+        chain: ['a', 'b', 'a'],
         location: '/#x',
       );
-      expect(circular.chain, ['§a', '§b', '§a']);
+      expect(circular.chain, ['a', 'b', 'a']);
       expect(circular.location, '/#x');
 
       final noVariant = NoVariantException(
         ['x'],
-        ruleKey: '§a',
+        ruleKey: 'a',
         location: '/#x',
         reasons: ['variant 0: nope'],
       );
-      expect(noVariant.ruleKey, '§a');
+      expect(noVariant.ruleKey, 'a');
       expect(noVariant.location, '/#x');
       expect(noVariant.reasons, ['variant 0: nope']);
+
+      final ambiguous = AmbiguousVariantException(
+        ['x'],
+        ruleKey: 'a',
+        location: '/#x',
+        specificity: 1,
+        variantIndices: [0, 1],
+      );
+      expect(ambiguous.ruleKey, 'a');
+      expect(ambiguous.location, '/#x');
+      expect(ambiguous.specificity, 1);
+      expect(ambiguous.variantIndices, [0, 1]);
 
       final missing = MissingInputException(['x'], inputName: 'w', query: '#w');
       expect(missing.inputName, 'w');
@@ -74,6 +86,7 @@ void main() {
         UnknownRuleException() => 'unknownRule',
         CircularAliasException() => 'circularAlias',
         NoVariantException() => 'noVariant',
+        AmbiguousVariantException() => 'ambiguousVariant',
         MissingInputException() => 'missingInput',
         StuckException() => 'stuck',
         ResolveException() => 'resolve',

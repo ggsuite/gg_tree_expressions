@@ -31,9 +31,9 @@ void main() {
         '[1, $i]',
         "{'nested': $i}",
         if (i < ruleCount - 1)
-          "{'§': '§r${i + 1 + random.nextInt(ruleCount - 1 - i)}'}",
+          "{'§': 'r${i + 1 + random.nextInt(ruleCount - 1 - i)}'}",
       ];
-      book['§r$i'] = [
+      book['r$i'] = [
         {
           if (random.nextBool())
             'inputs': {
@@ -50,7 +50,7 @@ void main() {
           },
       ];
       // Rules without the 'a' input must not use it.
-      final variants = book['§r$i'] as List;
+      final variants = book['r$i'] as List;
       final base = variants.first as Map;
       if (!base.containsKey('inputs') && base['expression'] == 'a + $i') {
         base['expression'] = '$i';
@@ -61,7 +61,7 @@ void main() {
 
   Object? randomValue(int ruleCount, int depth) {
     final roll = random.nextInt(8);
-    if (roll == 0) return {'§': '§r${random.nextInt(ruleCount)}'};
+    if (roll == 0) return {'§': 'r${random.nextInt(ruleCount)}'};
     if (roll == 1) return {'§expression': '2 * ${random.nextInt(5)}'};
     if (roll == 2 && depth < 2) {
       return {

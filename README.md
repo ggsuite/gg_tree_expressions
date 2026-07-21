@@ -18,7 +18,7 @@ import 'package:gg_tree_expressions/gg_tree_expressions.dart';
 
 void main() {
   final ruleBook = RuleBook.fromJson({
-    '§borderWidth': [
+    'borderWidth': [
       // Base definition: applies everywhere.
       {'expression': '1.0'},
       // Override for one context.
@@ -44,7 +44,7 @@ void main() {
       Tree<Json>(
         key: 'dialog',
         data: {
-          'borderWidth': {'§': '§borderWidth'},
+          'borderWidth': {'§': 'borderWidth'},
         },
       ),
     ],
@@ -60,19 +60,45 @@ void main() {
 
 | Term | Meaning |
 |---|---|
-| Reference | A map value `{"§": "§ruleName"}` in tree data. Replaced by the rule's result at its exact location — also inside nested maps and lists. |
-| Rule | A named list of variants under a rule key like `"§borderWidth"`. |
-| Variant | Optional `selector`, optional `inputs`, one CEL `expression`. |
+| Reference | A map value `{"§": "ruleName"}` in tree data. Replaced by the rule's result at its exact location — also inside nested maps and lists. |
+| Rule | A named list of variants under a rule key like `"borderWidth"`. |
+| Variant | Optional `selector`, optional `when` predicate, optional `inputs`, one CEL `expression`. |
 | Selector | Conditions `treeQuery == literal`, all of which must hold. |
 | Inputs | Explicit bindings from CEL identifiers to tree queries, evaluated from the node holding the reference. |
 
 ### Precedence
 
-The variant with the most selector conditions wins (CSS-like
-specificity); ties go to the later variant. `RuleBook.merge` takes
-books in ascending priority (e.g. global → vendor → item), so later
-books win ties. If no variant matches, resolution fails with the
-per-variant reasons — unless the rule is `optional` (see below).
+The variant with the highest **effective specificity** wins —
+`2 * selectorConditions + (when ? 1 : 0)`, so more conditions win
+outright (CSS-like) and a `when` predicate breaks ties among equal
+counts. If two or more variants match at that same specificity,
+resolution fails with an `AmbiguousVariantException` — ties are an
+error, never broken by order, so make selectors specific enough that
+exactly one wins. `RuleBook.merge` takes books in ascending priority
+(e.g. global → vendor → item). If no variant matches, resolution fails
+with the per-variant reasons — unless the rule is `optional` (see
+below).
+
+### Complex conditions with `when`
+
+Equality selectors handle categorical matches. For ranges, comparisons,
+or OR, add an optional `when` CEL predicate (it reads tree values
+through the same `inputs` as the expression); the variant applies when
+its selector matches **and** `when` evaluates to `true`:
+
+```jsonc
+{
+  "selector": { "manufacturer#id": "acme" },
+  "when": "height < 2000.0 || width > 1000.0",
+  "inputs": { "height": "#height", "width": "#width" },
+  "expression": "'compact'"
+}
+```
+
+A `when` outranks the otherwise-identical variant (including the base).
+Because same-specificity ties are an error, `when` predicates meant as
+alternatives should be mutually exclusive; for "either condition ⇒ the
+same result" use one `when` with `||`.
 
 ### Inputs and defaults
 
@@ -110,7 +136,7 @@ reference or an inline expression — anything else (e.g. a typo like
 
 ```json
 {
-  "§hint": {
+  "hint": {
     "optional": true,
     "resultType": "number",
     "variants": [ { "selector": { "#a": 1 }, "expression": "2.0" } ]
@@ -133,8 +159,8 @@ validates every resolved result of the rule.
 - `resolveAtomic(tree)` mutates the tree in place but atomically:
   resolution runs on a copy and is written back only on success, so on
   error the tree is left untouched (unlike `inPlace: true`, which may
-  leave partial state). Meant for pipeline steps — e.g. a fitter —
-  that must mutate the tree they are handed yet stay all-or-nothing.
+  leave partial state). Meant for pipeline steps that must mutate the
+  tree they are handed yet stay all-or-nothing.
 - One call resolves everything, order-independently: items whose
   selectors or inputs read still-unresolved values are deferred and
   retried; queries never silently search past an unresolved value.
@@ -157,14 +183,15 @@ final (resolved, report) = Resolver(ruleBook: ruleBook)
     .resolveVerbose(app, rich: true);
 print(report);
 // ResolutionReport (1 entries, rich):
-//   /dialog#borderWidth ← §borderWidth[2] = 3.0  {selector {…}; inputs {…}; …}
+//   /dialog#borderWidth ← borderWidth[2] = 3.0  {selector {…}; inputs {…}; …}
 ```
 
 Each `ProvenanceEntry` carries, at minimum, the `location`, the `kind`
 (`rule` / `inline` / `optionalRemoval`), the `ruleKey`, the
 `variantIndex`, and the `value`. Pass `rich: true` to also capture the
-winning variant's `selector`, the bound `inputs`, the `expression`
-source, and the `aliasChain`. A location appears once per alias hop.
+winning variant's `selector`, its `when` predicate (if any), the bound
+`inputs`, the `expression` source, and the `aliasChain`. A location
+appears once per alias hop.
 `report.at(location)` filters, and both `ResolutionReport` and
 `ProvenanceEntry` have `toJson()`. `resolve()` itself is unchanged and
 records nothing.

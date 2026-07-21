@@ -56,6 +56,39 @@ class SelectBlocked extends SelectResult {
   final String blocker;
 }
 
+/// Two or more variants match at the same (winning) specificity, so the
+/// winner is ambiguous. Ties are never broken silently — the author
+/// must make the selectors specific enough that exactly one wins.
+class SelectAmbiguous extends SelectResult {
+  /// Creates the result carrying the shared [specificity] and the tied
+  /// [matches], in rule order.
+  const SelectAmbiguous(this.specificity, this.matches);
+
+  /// The shared selector-condition count of the tied variants (their
+  /// `when` predicates, if any, are also identical in presence).
+  final int specificity;
+
+  /// The tied matching variants, in rule order.
+  final List<SelectMatch> matches;
+}
+
+// .............................................................................
+/// Evaluates a variant's [RuleVariant.when] predicate at a node during
+/// selection: [MatchSuccess] (holds), [MatchFailure] (does not), or
+/// [MatchBlocked] (an input reads a still-unresolved value). Injected by
+/// the resolver so [Rule.select] needs no CEL dependency of its own.
+typedef WhenEvaluator =
+    MatchResult Function(RuleVariant variant, Tree<Json> node, int index);
+
+/// A selector-matching (or selector-blocked) variant kept during
+/// [Rule.select], grouped by effective specificity. `selectorBlock` is
+/// non-null when the selector itself is blocked (deferred).
+typedef _Ranked = ({
+  RuleVariant variant,
+  int index,
+  SelectBlocked? selectorBlock,
+});
+
 // .............................................................................
 /// A named unit consisting of one or more variants.
 class Rule {
@@ -75,9 +108,9 @@ class Rule {
     if (!isRuleKey(key)) {
       throw SchemaException([
         'Invalid rule key "$key".',
-        'Rule keys match ${ruleKeyPattern.pattern} — a "§" followed '
-            'by a letter and letters, digits, or underscores '
-            '(e.g. "§borderWidth").',
+        'Rule keys match ${ruleKeyPattern.pattern} — a letter '
+            'followed by letters, digits, or underscores '
+            '(e.g. "borderWidth").',
       ]);
     }
 
@@ -142,7 +175,19 @@ class Rule {
     );
   }
 
-  /// The rule key, including the `§` prefix.
+  /// An example rule computing a border width: a base variant, a
+  /// dark-mode override, and the [RuleVariant.example] refinement.
+  factory Rule.example() => Rule(
+    key: 'borderWidth',
+    variants: [
+      RuleVariant(expression: '1.0'),
+      RuleVariant(selector: Selector({'theme#id': 'dark'}), expression: '2.0'),
+      RuleVariant.example(),
+    ],
+    resultType: ResultType.number,
+  );
+
+  /// The rule key (a plain identifier, no `§` prefix).
   final String key;
 
   /// The variants in merged rule book order.
@@ -161,55 +206,109 @@ class Rule {
   // ...........................................................................
   /// Selects the winning variant at [node].
   ///
-  /// The variant with the highest selector specificity wins; ties go
-  /// to the later variant. Returns [SelectBlocked] when a blocked
-  /// variant could still outrank the current winner.
-  SelectResult select(Tree<Json> node) {
-    RuleVariant? bestVariant;
-    var bestIndex = -1;
-    var bestSpecificity = -1;
-    final reasons = <String>[];
-    SelectBlocked? blocked;
-    var blockedSpecificity = -1;
-    var blockedIndex = -1;
-
-    // One node, read once per distinct condition query across variants.
+  /// A variant applies when its selector matches and its [
+  /// RuleVariant.when] predicate (if any) holds. The applying variant
+  /// with the highest **effective specificity** wins:
+  /// `2 * selectorConditions + (when != null ? 1 : 0)` — i.e. more
+  /// selector conditions win outright, and a `when` breaks ties among
+  /// variants with the same condition count (so a `when`-variant beats
+  /// the otherwise-identical one, including the base).
+  ///
+  /// If two or more variants apply at that same effective specificity
+  /// the result is [SelectAmbiguous]: ties are an error, not broken by
+  /// order. Returns [SelectBlocked] when a blocked variant could still
+  /// change the outcome once resolved.
+  ///
+  /// Selection walks tiers from the highest effective specificity down,
+  /// so a `when` is evaluated only for the tier that can still win — a
+  /// dominated variant's `when` (including a broken one) is never run
+  /// and cannot abort resolution.
+  ///
+  /// [evaluateWhen] evaluates `when` predicates; the resolver supplies
+  /// it. It may be omitted only when no reachable variant has a `when`.
+  SelectResult select(Tree<Json> node, {WhenEvaluator? evaluateWhen}) {
     final readCache = <String, ReadResult>{};
+    final reasons = <String>[];
 
+    // Pass 1: match selectors only (cheap, never throws). Group the
+    // selector-matching and selector-blocked variants by effective
+    // specificity.
+    final byTier = <int, List<_Ranked>>{};
     for (var i = 0; i < variants.length; i++) {
       final variant = variants[i];
-      final specificity = variant.selector.specificity;
+      final spec = _effectiveSpecificity(variant);
       switch (variant.selector.match(node, readCache: readCache)) {
         case MatchSuccess():
-          if (specificity > bestSpecificity ||
-              (specificity == bestSpecificity && i > bestIndex)) {
-            bestVariant = variant;
-            bestIndex = i;
-            bestSpecificity = specificity;
-          }
+          (byTier[spec] ??= []).add((
+            variant: variant,
+            index: i,
+            selectorBlock: null,
+          ));
+        case MatchBlocked(:final query, :final blocker):
+          (byTier[spec] ??= []).add((
+            variant: variant,
+            index: i,
+            selectorBlock: SelectBlocked(query, blocker),
+          ));
         case MatchFailure(:final reason):
           reasons.add('variant $i: $reason');
-        case MatchBlocked(:final query, :final blocker):
-          if (specificity > blockedSpecificity ||
-              (specificity == blockedSpecificity && i > blockedIndex)) {
-            blocked = SelectBlocked(query, blocker);
-            blockedSpecificity = specificity;
-            blockedIndex = i;
-          }
       }
     }
 
-    // A blocked variant only matters when it could beat the winner.
-    if (blocked != null &&
-        (blockedSpecificity > bestSpecificity ||
-            (blockedSpecificity == bestSpecificity &&
-                blockedIndex > bestIndex))) {
-      return blocked;
+    // Pass 2: decide from the highest tier down, evaluating `when` only
+    // within the tier under consideration.
+    final tiers = byTier.keys.toList()..sort((a, b) => b.compareTo(a));
+    for (final tier in tiers) {
+      final applies = <SelectMatch>[];
+      SelectBlocked? blocked;
+      for (final ranked in byTier[tier]!) {
+        if (ranked.selectorBlock != null) {
+          blocked ??= ranked.selectorBlock;
+          continue;
+        }
+        final variant = ranked.variant;
+        if (!variant.hasWhen) {
+          applies.add(SelectMatch(variant, ranked.index));
+          continue;
+        }
+        if (evaluateWhen == null) {
+          throw StateError(
+            'Rule "$key" has a variant with a "when" predicate but '
+            'select() was called without a when evaluator; resolve via '
+            'a Resolver.',
+          );
+        }
+        switch (evaluateWhen(variant, node, ranked.index)) {
+          case MatchSuccess():
+            applies.add(SelectMatch(variant, ranked.index));
+          case MatchFailure(:final reason):
+            reasons.add('variant ${ranked.index}: $reason');
+          case MatchBlocked(:final query, :final blocker):
+            blocked ??= SelectBlocked(query, blocker);
+        }
+      }
+
+      // Two or more apply at this tier → ambiguous (a pending block
+      // can't un-ambiguate it, so decide now instead of deferring).
+      if (applies.length > 1) {
+        final spec = applies.first.variant.selector.specificity;
+        return SelectAmbiguous(spec, applies);
+      }
+      // A block at this tier could still apply once resolved, so the
+      // tier isn't final yet — defer.
+      if (blocked != null) return blocked;
+      if (applies.length == 1) return applies.single;
+      // Tier produced no applying variant → descend.
     }
 
-    if (bestVariant != null) return SelectMatch(bestVariant, bestIndex);
     return SelectNone(reasons);
   }
+
+  /// `2 * selectorConditions + (when ? 1 : 0)` — a `when` ranks a
+  /// variant just above an otherwise-identical one, while extra
+  /// selector conditions always win outright.
+  static int _effectiveSpecificity(RuleVariant variant) =>
+      2 * variant.selector.specificity + (variant.hasWhen ? 1 : 0);
 
   // ...........................................................................
   /// Returns this rule merged with [other] (higher priority).

@@ -37,9 +37,9 @@ Create `benchmark/` with a small Stopwatch-based harness (or dev-dep
 gg's offline pub get keeps working). Reuse/adapt the generators from
 `test/resolver_property_test.dart` for realistic shapes.
 
-Workload profiles (parameterized; sizes reflect the future ds_slot
-consumer — cabinet trees are tens-to-hundreds of nodes, resolved
-once per article, potentially thousands of articles per catalog run):
+Workload profiles (parameterized; sizes reflect a realistic consumer —
+trees of tens-to-hundreds of nodes, resolved once per item, potentially
+thousands of items per run):
 
 | Profile | Shape | What it stresses |
 |---|---|---|

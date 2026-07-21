@@ -13,6 +13,7 @@ import 'rule.dart';
 import 'rule_book.dart';
 import 'rule_ref.dart';
 import 'rule_variant.dart';
+import 'selector.dart';
 import 'tree_expressions_exception.dart';
 import 'tree_reader.dart';
 
@@ -50,6 +51,18 @@ class Resolver {
             'In rule "$key", variant $i:',
             ...e.messages,
           ], expression: expression);
+        }
+
+        final when = rule.variants[i].when;
+        if (when != null) {
+          try {
+            CompiledExpression.compile(when, cache: _cache);
+          } on TreeExpressionsException catch (e) {
+            throw ExpressionException([
+              'In rule "$key", variant $i, "when":',
+              ...e.messages,
+            ], expression: when);
+          }
         }
       }
     }
@@ -106,7 +119,7 @@ class Resolver {
   /// mode.
   ///
   /// Use this from a pipeline step that must mutate the tree it is
-  /// handed (e.g. a fitter) yet stay all-or-nothing on failure.
+  /// handed yet stay all-or-nothing on failure.
   Tree<T> resolveAtomic<T extends Json>(Tree<T> tree) {
     final resolved = _resolve(tree, false, null);
     _adoptData(tree, resolved);
@@ -179,13 +192,20 @@ class Resolver {
   /// be resolved right now (blocked on unresolved values).
   Object? resolveRule(Tree<Json> node, Rule rule) {
     final context = 'rule "${rule.key}" at node "${node.path}"';
-    switch (rule.select(node)) {
+    final selection = rule.select(
+      node,
+      evaluateWhen: (variant, atNode, index) =>
+          _evaluateWhen(rule, index, variant, atNode),
+    );
+    switch (selection) {
       case SelectBlocked(:final query, :final blocker):
         throw ResolveException([
           'Cannot resolve $context:',
           'selector condition "$query" waits for the unresolved '
               'value at "$blocker".',
         ]);
+      case SelectAmbiguous(:final specificity, :final matches):
+        throw _ambiguousVariant(rule, node.path, specificity, matches);
       case SelectNone(:final reasons):
         if (rule.isOptional) return null;
         throw _noVariantMatched(rule, node.path, reasons);
@@ -308,7 +328,7 @@ class Resolver {
           'match no known form.',
       '',
       'Maps with §-keys are reserved. Allowed forms:',
-      '  - reference:         {"$referenceKey": "§ruleName"}',
+      '  - reference:         {"$referenceKey": "ruleName"}',
       '  - inline expression: {"$inlineExpressionKey": "…", '
           '"$inlineInputsKey": {…}}',
     ]);
@@ -322,7 +342,7 @@ class Resolver {
         'Invalid reference at "${item.location}": $map',
         'A reference is a map with the single key "$referenceKey" '
             'holding a rule key, e.g. {"$referenceKey": '
-            '"§borderWidth"}.',
+            '"borderWidth"}.',
       ]);
     }
     return key;
@@ -364,12 +384,19 @@ class Resolver {
       );
     }
 
-    switch (rule.select(item.node)) {
+    final selection = rule.select(
+      item.node,
+      evaluateWhen: (variant, atNode, index) =>
+          _evaluateWhen(rule, index, variant, atNode),
+    );
+    switch (selection) {
       case SelectBlocked(:final query, :final blocker):
         item.blockReason =
             'selector condition "$query" waits for the '
             'unresolved value at "$blocker"';
         return false;
+      case SelectAmbiguous(:final specificity, :final matches):
+        throw _ambiguousVariant(rule, item.location, specificity, matches);
       case SelectNone(:final reasons):
         if (rule.isOptional) {
           _recordRemoval(recorder, item, key);
@@ -475,6 +502,7 @@ class Resolver {
         selector: recorder.rich
             ? Map<String, Object>.of(variant.selector.conditions)
             : null,
+        when: recorder.rich ? variant.when : null,
         inputs: recorder.rich ? Map<String, Object?>.of(inputs) : null,
         expression: recorder.rich ? variant.expression : null,
         aliasChain: recorder.rich ? List<String>.unmodifiable(chain) : null,
@@ -551,6 +579,8 @@ class Resolver {
           return _Blocked(
             '${describe(name)} ("${input.query}") waits for the '
             'unresolved value at "$blocker"',
+            query: input.query,
+            blocker: blocker,
           );
         case ReadMissing():
           if (!input.hasDefault) {
@@ -602,6 +632,50 @@ class Resolver {
       ]);
     }
     return result;
+  }
+
+  /// Evaluates [variant]'s `when` predicate at [node] for selection.
+  ///
+  /// Binds the variant's inputs (so `when` reads the same values as the
+  /// expression): a blocked input defers ([MatchBlocked]); a missing one
+  /// without a default is an error. Returns [MatchSuccess]/[MatchFailure]
+  /// for the bool result; a non-bool or eval error is an
+  /// [ExpressionException].
+  MatchResult _evaluateWhen(
+    Rule rule,
+    int index,
+    RuleVariant variant,
+    Tree<Json> node,
+  ) {
+    final bound = _bindInputs(variant, node, rule.key, index);
+    if (bound is _Blocked) return MatchBlocked(bound.query, bound.blocker);
+
+    final context =
+        'the "when" of rule "${rule.key}" (variant $index) at '
+        '"${node.path}"';
+    final Object? result;
+    try {
+      result = CompiledExpression.compile(
+        variant.when!,
+        cache: _cache,
+      ).evaluate(bound as Map<String, Object?>);
+    } on TreeExpressionsException catch (e) {
+      throw ExpressionException([
+        'While evaluating $context:',
+        ...e.messages,
+      ], expression: variant.when!);
+    }
+
+    if (result is! bool) {
+      throw ExpressionException([
+        '$context returned $result (${result.runtimeType}) but a "when" '
+            'predicate must evaluate to a bool.',
+      ], expression: variant.when!);
+    }
+
+    return result
+        ? const MatchSuccess()
+        : MatchFailure.reason('"when" predicate "${variant.when}" is false');
   }
 
   // ...........................................................................
@@ -695,6 +769,31 @@ class Resolver {
     reasons: reasons,
   );
 
+  AmbiguousVariantException _ambiguousVariant(
+    Rule rule,
+    String location,
+    int specificity,
+    List<SelectMatch> matches,
+  ) => AmbiguousVariantException(
+    [
+      '${matches.length} variants of rule "${rule.key}" match at '
+          '"$location" with the same specificity ($specificity) — '
+          'the winner is ambiguous:',
+      ...matches.map((m) {
+        final when = m.variant.when;
+        final whenPart = when == null ? '' : ', when "$when"';
+        return '  - variant ${m.index}: selector '
+            '${m.variant.selector.toJson()}$whenPart';
+      }),
+      'Make the selectors (or `when` predicates) specific enough that '
+          'exactly one variant applies.',
+    ],
+    ruleKey: rule.key,
+    location: location,
+    specificity: specificity,
+    variantIndices: [for (final m in matches) m.index],
+  );
+
   StuckException _stuck(List<_WorkItem> deferred) {
     final pending = [
       for (final item in deferred)
@@ -717,8 +816,13 @@ class Resolver {
 // .............................................................................
 /// Signals that input binding must wait for another resolution.
 class _Blocked {
-  _Blocked(this.reason);
+  _Blocked(this.reason, {this.query = '', this.blocker = ''});
   final String reason;
+
+  /// The blocked input's query and the marker location — carried so a
+  /// blocked `when` can surface as a [MatchBlocked] during selection.
+  final String query;
+  final String blocker;
 }
 
 // .............................................................................

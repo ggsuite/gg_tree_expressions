@@ -1,0 +1,28 @@
+{
+  "resultType": "number",
+  "variants": [
+    {
+      "expression": "1.0"
+    },
+    {
+      "selector": {
+        "theme#id": "dark"
+      },
+      "expression": "2.0"
+    },
+    {
+      "selector": {
+        "theme#id": "dark",
+        "#platform": "mobile"
+      },
+      "inputs": {
+        "screenWidth": {
+          "query": "screen#width",
+          "default": 4.0
+        }
+      },
+      "expression": "screenWidth < 400.0 ? 3.0 : 2.0",
+      "description": "Thicker borders on small dark-mode screens."
+    }
+  ]
+}

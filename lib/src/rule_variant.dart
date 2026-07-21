@@ -27,20 +27,21 @@ class RuleVariant {
     required this.expression,
     Selector? selector,
     Map<String, RuleInput>? inputs,
+    this.when,
     this.description,
   }) : selector = selector ?? Selector.none,
        inputs = inputs ?? const {};
 
   /// Parses and validates a variant from rule book JSON.
   ///
-  /// [context] describes the owner (e.g. `'rule "§x", variant 2'`)
+  /// [context] describes the owner (e.g. `'rule "x", variant 2'`)
   /// for errors.
   factory RuleVariant.fromJson(Object? json, {required String context}) {
     if (json is! Map) {
       throw SchemaException(['$context must be a JSON object, got: $json']);
     }
 
-    const allowed = {'selector', 'inputs', 'expression', 'description'};
+    const allowed = {'selector', 'when', 'inputs', 'expression', 'description'};
     final unknown = json.keys.where((k) => !allowed.contains(k));
     if (unknown.isNotEmpty) {
       throw SchemaException([
@@ -60,6 +61,14 @@ class RuleVariant {
       ]);
     }
 
+    final when = json['when'];
+    if (when != null && (when is! String || when.trim().isEmpty)) {
+      throw SchemaException([
+        'The "when" predicate of $context must be a non-empty CEL '
+            'string, got: $when',
+      ]);
+    }
+
     final description = json['description'];
     if (description != null && description is! String) {
       throw SchemaException([
@@ -72,9 +81,19 @@ class RuleVariant {
       expression: expression,
       selector: Selector.fromJson(json['selector'], context: context),
       inputs: _inputsFromJson(json['inputs'], context: context),
+      when: when as String?,
       description: description as String?,
     );
   }
+
+  /// An example override variant applied to small dark-mode mobile
+  /// screens.
+  factory RuleVariant.example() => RuleVariant(
+    expression: 'screenWidth < 400.0 ? 3.0 : 2.0',
+    selector: Selector.example(),
+    inputs: {'screenWidth': RuleInput.example()},
+    description: 'Thicker borders on small dark-mode screens.',
+  );
 
   /// The CEL expression computing the rule result.
   final String expression;
@@ -83,16 +102,27 @@ class RuleVariant {
   /// the base variant.
   final Selector selector;
 
+  /// An optional CEL predicate (evaluating to bool) that must also hold
+  /// for this variant to apply, in addition to the [selector]. It reads
+  /// tree values through the same [inputs] as [expression]; null when
+  /// absent.
+  final String? when;
+
   /// Bindings from CEL identifiers to tree queries.
   final Map<String, RuleInput> inputs;
 
   /// Documentation only.
   final String? description;
 
+  /// True when a [when] predicate is present. It breaks specificity
+  /// ties among variants with the same number of selector conditions.
+  bool get hasWhen => when != null;
+
   // ...........................................................................
   /// Serializes the variant back to JSON.
   Json toJson() => {
     if (selector.conditions.isNotEmpty) 'selector': selector.toJson(),
+    if (when != null) 'when': when,
     if (inputs.isNotEmpty)
       'inputs': {
         for (final MapEntry(:key, :value) in inputs.entries)

@@ -1,0 +1,41 @@
+{
+  "key": "app",
+  "originalKey": "app",
+  "isReadOnly": false,
+  "_data": {},
+  "_children": [
+    {
+      "key": "tall",
+      "originalKey": "tall",
+      "isReadOnly": false,
+      "_data": {
+        "height": 2400.0,
+        "width": 600.0,
+        "shelves": 4,
+        "isCompact": false
+      }
+    },
+    {
+      "key": "short",
+      "originalKey": "short",
+      "isReadOnly": false,
+      "_data": {
+        "height": 700.0,
+        "width": 600.0,
+        "shelves": 1,
+        "isCompact": true
+      }
+    },
+    {
+      "key": "wide",
+      "originalKey": "wide",
+      "isReadOnly": false,
+      "_data": {
+        "height": 1500.0,
+        "width": 1400.0,
+        "shelves": 1,
+        "isCompact": true
+      }
+    }
+  ]
+}

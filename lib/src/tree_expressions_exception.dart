@@ -120,6 +120,33 @@ class NoVariantException extends TreeExpressionsException {
 }
 
 // .............................................................................
+/// Two or more variants of a rule match a node at the same specificity,
+/// so the winner is ambiguous. Ties are never broken silently — the
+/// selectors must be specific enough that exactly one variant wins.
+class AmbiguousVariantException extends TreeExpressionsException {
+  /// Creates the exception.
+  AmbiguousVariantException(
+    super.messages, {
+    required this.ruleKey,
+    required this.location,
+    required this.specificity,
+    required this.variantIndices,
+  });
+
+  /// The rule with the tied variants.
+  final String ruleKey;
+
+  /// The tree location of the reference.
+  final String location;
+
+  /// The shared specificity of the tied variants.
+  final int specificity;
+
+  /// The indices of the tied variants, in rule order.
+  final List<int> variantIndices;
+}
+
+// .............................................................................
 /// An input query resolved to nothing and declared no default.
 class MissingInputException extends TreeExpressionsException {
   /// Creates the exception.

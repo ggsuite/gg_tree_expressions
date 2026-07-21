@@ -43,9 +43,12 @@ class RuleBook {
 
   /// Merges [booksInAscendingPriority] into one book.
   ///
-  /// Variant lists are concatenated per rule key, so variants from
-  /// later books win specificity ties (e.g. global → vendor →
-  /// catalog → item).
+  /// Variant lists are concatenated per rule key (e.g. global → vendor
+  /// → catalog → item). A later book overrides an earlier one with a
+  /// more specific selector; two variants matching at the same
+  /// specificity are an ambiguity error, not resolved by order.
+  /// (Order still decides a rule's `optional`/`resultType`: the last
+  /// book to declare either wins.)
   factory RuleBook.merge(Iterable<RuleBook> booksInAscendingPriority) {
     final rules = <String, Rule>{};
     for (final book in booksInAscendingPriority) {
@@ -57,12 +60,32 @@ class RuleBook {
     return RuleBook._(rules);
   }
 
+  /// An example rule book covering the shorthand and object forms.
+  ///
+  /// A typed multi-variant rule ([Rule.example]), a shorthand base
+  /// rule, and an optional rule without a base variant.
+  factory RuleBook.example() => RuleBook.fromJson(<String, dynamic>{
+    'borderWidth': Rule.example().toJson(),
+    'gap': [
+      {'expression': '8.0'},
+    ],
+    'decoration': {
+      'optional': true,
+      'variants': [
+        {
+          'selector': {'#style': 'fancy'},
+          'expression': '"gold"',
+        },
+      ],
+    },
+  });
+
   final Map<String, Rule> _rules;
 
   /// The keys of all rules in this book.
   Iterable<String> get keys => _rules.keys;
 
-  /// Returns the rule for [key] (with `§` prefix) or null.
+  /// Returns the rule for [key], or null when unknown.
   Rule? ruleForKey(String key) => _rules[key];
 
   /// Returns keys similar to the unknown [key], best match first.
@@ -97,16 +120,20 @@ class RuleBook {
         }
       }
 
-      // Identical selectors within one rule.
+      // Identical selectors (and `when`) within one rule. Variants that
+      // differ only by `when` are not flagged — their predicates may be
+      // mutually exclusive.
       for (var i = 0; i < rule.variants.length; i++) {
         for (var j = i + 1; j < rule.variants.length; j++) {
-          if (deeplEquals(
-            rule.variants[i].selector.toJson(),
-            rule.variants[j].selector.toJson(),
-          )) {
+          final vi = rule.variants[i];
+          final vj = rule.variants[j];
+          if (deeplEquals(vi.selector.toJson(), vj.selector.toJson()) &&
+              vi.when == vj.when) {
+            final also = vi.when == null ? '' : ' and `when` predicates';
             findings.add(
               'Rule "${rule.key}": variants $i and $j have identical '
-              'selectors — variant $j always wins.',
+              'selectors$also — a node matching them resolves '
+              'ambiguously.',
             );
           }
         }

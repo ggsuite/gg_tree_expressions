@@ -4,6 +4,7 @@
 // Use of this source code is governed by terms that can be
 // found in the LICENSE file in the root of this package.
 
+import 'package:gg_golden/gg_golden.dart';
 import 'package:gg_tree_expressions/gg_tree_expressions.dart';
 import 'package:test/test.dart';
 
@@ -351,6 +352,78 @@ void main() {
         expect(copy.inputs.keys, original.inputs.keys);
         expect(copy.inputs['depth']!.hasDefault, isTrue);
         expect(copy.inputs['depth']!.defaultValue, isNull);
+      });
+    });
+
+    group('example()', () {
+      test('serializes the example variant (golden)', () async {
+        final json = RuleVariant.example().toJson();
+        await writeGolden('rule_variant_example.json', json);
+
+        final reparsed = RuleVariant.fromJson(json, context: 'example');
+        expect(reparsed.toJson(), json);
+        expect(reparsed.selector.specificity, 2);
+        expect(reparsed.inputs['screenWidth']!.hasDefault, isTrue);
+        expect(reparsed.description, isNotNull);
+      });
+    });
+
+    group('when', () {
+      test('parses a when predicate and reports hasWhen', () {
+        final variant = RuleVariant.fromJson({
+          'when': 'height < 2000.0',
+          'inputs': {'height': '#height'},
+          'expression': '1.0',
+        }, context: 'test variant');
+        expect(variant.when, 'height < 2000.0');
+        expect(variant.hasWhen, isTrue);
+      });
+
+      test('defaults to no when', () {
+        final variant = RuleVariant(expression: 'x');
+        expect(variant.when, isNull);
+        expect(variant.hasWhen, isFalse);
+      });
+
+      test('throws when the predicate is empty or whitespace', () {
+        for (final bad in ['', '   ']) {
+          var message = '';
+          try {
+            RuleVariant.fromJson({
+              'when': bad,
+              'expression': '1',
+            }, context: 'test variant');
+          } on TreeExpressionsException catch (e) {
+            message = e.message;
+          }
+          expect(message, contains('"when" predicate of test variant'));
+          expect(message, contains('non-empty CEL string'));
+        }
+      });
+
+      test('throws when the predicate is not a string', () {
+        var message = '';
+        try {
+          RuleVariant.fromJson({
+            'when': 42,
+            'expression': '1',
+          }, context: 'test variant');
+        } on TreeExpressionsException catch (e) {
+          message = e.message;
+        }
+        expect(message, contains('"when" predicate of test variant'));
+        expect(message, contains('got: 42'));
+      });
+
+      test('serializes when in toJson and round-trips', () {
+        final json = {
+          'selector': {'#type': 'door'},
+          'when': 'h > 1.0',
+          'inputs': {'h': '#h'},
+          'expression': '2.0',
+        };
+        final variant = RuleVariant.fromJson(json, context: 'x');
+        expect(variant.toJson(), json);
       });
     });
   });

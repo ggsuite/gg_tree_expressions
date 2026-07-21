@@ -1,0 +1,54 @@
+{
+  "rich": true,
+  "entries": [
+    {
+      "location": "/dialog#borderWidth",
+      "kind": "rule",
+      "ruleKey": "borderWidth",
+      "variantIndex": 2,
+      "value": 3.0,
+      "selector": {
+        "theme#id": "dark",
+        "#platform": "mobile"
+      },
+      "inputs": {
+        "screenWidth": 380.0
+      },
+      "expression": "screenWidth < 400.0 ? 3.0 : 2.0",
+      "aliasChain": [
+        "borderWidth"
+      ]
+    },
+    {
+      "location": "/dialog#gap",
+      "kind": "rule",
+      "ruleKey": "gap",
+      "variantIndex": 0,
+      "value": 8.0,
+      "selector": {},
+      "inputs": {},
+      "expression": "8.0",
+      "aliasChain": [
+        "gap"
+      ]
+    },
+    {
+      "location": "/dialog#decoration",
+      "kind": "optionalRemoval",
+      "ruleKey": "decoration",
+      "aliasChain": [
+        "decoration"
+      ]
+    },
+    {
+      "location": "/dialog#title",
+      "kind": "inline",
+      "value": 16.0,
+      "inputs": {
+        "gap": 8.0
+      },
+      "expression": "gap * 2.0",
+      "aliasChain": []
+    }
+  ]
+}

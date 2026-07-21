@@ -13,7 +13,7 @@ void main() {
   // A rule book: rules are lists of variants; the most specific
   // matching selector wins.
   final ruleBook = RuleBook.fromJson({
-    '§borderWidth': [
+    'borderWidth': [
       {'expression': '1.0'},
       {
         'selector': {'theme#id': 'dark'},
@@ -37,7 +37,7 @@ void main() {
       Tree<Json>(
         key: 'dialog',
         data: {
-          'borderWidth': {'§': '§borderWidth'},
+          'borderWidth': {'§': 'borderWidth'},
         },
       ),
     ],

@@ -1,0 +1,4 @@
+{
+  "query": "screen#width",
+  "default": 4.0
+}

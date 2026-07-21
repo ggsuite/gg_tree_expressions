@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0] - 2026-07-21
+
+### Added
+
+- Add examples, goldens and remove paragraph sign from rule names
+- Add when field for rule selectors, allowing CEL for values
+
 ## [1.0.1] - 2026-07-13
 
 ### Changed
@@ -74,6 +81,7 @@ pinning the supported cross-language subset.
 
 - Initial boilerplate.
 
+[1.1.0]: https://github.com/ggsuite/gg_tree_expressions/compare/1.0.1...1.1.0
 [1.0.1]: https://github.com/ggsuite/gg_tree_expressions/compare/1.0.0...1.0.1
 [1.0.0]: https://github.com/ggsuite/gg_tree_expressions/compare/0.3.0...1.0.0
 [0.3.0]: https://github.com/ggsuite/gg_tree_expressions/compare/0.2.0...0.3.0

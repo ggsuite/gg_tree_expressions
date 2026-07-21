@@ -5,7 +5,7 @@
 // found in the LICENSE file in the root of this package.
 
 /// The pattern a rule key must match.
-final RegExp ruleKeyPattern = RegExp(r'^§[a-zA-Z][a-zA-Z0-9_]*$');
+final RegExp ruleKeyPattern = RegExp(r'^[a-zA-Z][a-zA-Z0-9_]*$');
 
 /// The key marking a map in tree data as a rule reference.
 const String referenceKey = '§';
@@ -16,10 +16,10 @@ const String inlineExpressionKey = '§expression';
 /// The key holding the inputs of an inline expression map.
 const String inlineInputsKey = '§inputs';
 
-/// Returns true when [key] is a valid rule key like `'§borderWidth'`.
+/// Returns true when [key] is a valid rule key like `'borderWidth'`.
 bool isRuleKey(String key) => ruleKeyPattern.hasMatch(key);
 
-/// Returns true when [value] is a reference like `{"§": "§name"}`.
+/// Returns true when [value] is a reference like `{"§": "name"}`.
 ///
 /// Plain strings are never references, so no produced value can look
 /// like one — resolved trees stay re-resolvable.

@@ -231,7 +231,7 @@ _Profile _slotTreeLike(
   Json dataFor(int d) {
     final data = d == 0 ? rootData() : <String, dynamic>{'depth': d};
     if (rnd.nextDouble() < 0.10) {
-      data['pw'] = <String, dynamic>{'§': '§r${rnd.nextInt(rules)}'};
+      data['pw'] = <String, dynamic>{'§': 'r${rnd.nextInt(rules)}'};
     }
     return data;
   }
@@ -261,7 +261,7 @@ _Profile _denseRefs(String name, {required int depth, required int branching}) {
     };
     // A ref or an inline expression on every node.
     if (rnd.nextBool()) {
-      data['v'] = <String, dynamic>{'§': '§r${rnd.nextInt(rules)}'};
+      data['v'] = <String, dynamic>{'§': 'r${rnd.nextInt(rules)}'};
     } else {
       data['v'] = <String, dynamic>{
         '§expression': 'x * 2.0',
@@ -284,7 +284,7 @@ _Profile _denseRefs(String name, {required int depth, required int branching}) {
 
 _Profile _deepChain(String name, {required int length}) {
   final book = RuleBook.fromJson(<String, dynamic>{
-    '§chain': [
+    'chain': [
       <String, dynamic>{
         'inputs': <String, dynamic>{
           'child': <String, dynamic>{'query': './c#chainValue', 'default': 0},
@@ -297,7 +297,7 @@ _Profile _deepChain(String name, {required int length}) {
   Tree<Json> node(int remaining) => Tree<Json>(
     key: remaining == length ? 'root' : 'c',
     data: <String, dynamic>{
-      'chainValue': <String, dynamic>{'§': '§chain'},
+      'chainValue': <String, dynamic>{'§': 'chain'},
     },
     children: [if (remaining > 1) node(remaining - 1)],
   );
@@ -335,11 +335,11 @@ _Profile _wideBook(
         'expression': '${r * 100 + v}.0',
       });
     }
-    book['§w$r'] = variants;
+    book['w$r'] = variants;
   }
   // Padding rules with distinct expressions (construction cost).
   for (var r = fatCount; r < rules; r++) {
-    book['§w$r'] = [
+    book['w$r'] = [
       <String, dynamic>{'expression': '$r.0 + 0.$r'},
     ];
   }
@@ -358,7 +358,7 @@ _Profile _wideBook(
         'c': rnd.nextBool(),
       };
       if (rnd.nextDouble() < refs / 127.0) {
-        data['v'] = <String, dynamic>{'§': '§w${rnd.nextInt(fatCount)}'};
+        data['v'] = <String, dynamic>{'§': 'w${rnd.nextInt(fatCount)}'};
       }
       return data;
     },
@@ -377,7 +377,7 @@ _Profile _bigValues(String name, {required int entries, required int refs}) {
       'e$i': <String, dynamic>{'x': i, 'y': 'v$i', 'z': i.isEven},
   };
   final book = RuleBook.fromJson(<String, dynamic>{
-    '§big': [
+    'big': [
       <String, dynamic>{
         'inputs': <String, dynamic>{'b': '#blob'},
         // Reads one member; the cost under test is the containsMarker
@@ -393,7 +393,7 @@ _Profile _bigValues(String name, {required int entries, required int refs}) {
       Tree<Json>(
         key: 'n$i',
         data: <String, dynamic>{
-          'v': <String, dynamic>{'§': '§big'},
+          'v': <String, dynamic>{'§': 'big'},
         },
       ),
     );
@@ -426,7 +426,7 @@ void _runGrowLoop({required int warmup, required int runs}) {
             }
           : <String, dynamic>{'depth': d};
       if (rnd.nextDouble() < 0.10) {
-        data['pw'] = <String, dynamic>{'§': '§r${rnd.nextInt(rules)}'};
+        data['pw'] = <String, dynamic>{'§': 'r${rnd.nextInt(rules)}'};
       }
       return data;
     },
@@ -443,7 +443,7 @@ void _runGrowLoop({required int warmup, required int runs}) {
         Tree<Json>(
           key: '$tag$i',
           data: <String, dynamic>{
-            'pw': <String, dynamic>{'§': '§r${graftRnd.nextInt(rules)}'},
+            'pw': <String, dynamic>{'§': 'r${graftRnd.nextInt(rules)}'},
           },
         ),
       ]);
@@ -637,7 +637,7 @@ Tree<Json> _buildTree({
 Json _slotBook(int rules) {
   final book = <String, dynamic>{};
   for (var i = 0; i < rules; i++) {
-    book['§r$i'] = [
+    book['r$i'] = [
       <String, dynamic>{
         'inputs': <String, dynamic>{
           'w': '#settings/dims/width',
@@ -672,10 +672,10 @@ Json _wideBookJson(int rules, int fatVariants) {
         'expression': '${r * 100 + v}.0',
       });
     }
-    book['§w$r'] = variants;
+    book['w$r'] = variants;
   }
   for (var r = fatCount; r < rules; r++) {
-    book['§w$r'] = [
+    book['w$r'] = [
       <String, dynamic>{'expression': '$r.0 + 0.$r'},
     ];
   }

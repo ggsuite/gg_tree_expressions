@@ -4,6 +4,7 @@
 // Use of this source code is governed by terms that can be
 // found in the LICENSE file in the root of this package.
 
+import 'package:gg_golden/gg_golden.dart';
 import 'package:gg_tree_expressions/gg_tree_expressions.dart';
 import 'package:test/test.dart';
 
@@ -227,6 +228,20 @@ void main() {
         );
         expect(reparsed.hasDefault, isTrue);
         expect(reparsed.defaultValue, isNull);
+      });
+    });
+
+    group('example()', () {
+      test('serializes the example input (golden)', () async {
+        final json = RuleInput.example().toJson();
+        await writeGolden('rule_input_example.json', json);
+
+        expect(json, {'query': 'screen#width', 'default': 4.0});
+
+        final reparsed = RuleInput.fromJson(json, context: 'example');
+        expect(reparsed.query, 'screen#width');
+        expect(reparsed.defaultValue, 4.0);
+        expect(reparsed.hasDefault, isTrue);
       });
     });
   });

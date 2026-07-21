@@ -14,44 +14,46 @@ void main() {
         const e = ProvenanceEntry(
           location: '/dialog#borderWidth',
           kind: ProvenanceKind.rule,
-          ruleKey: '§borderWidth',
+          ruleKey: 'borderWidth',
           variantIndex: 2,
           value: 3.0,
         );
-        expect(e.toString(), '/dialog#borderWidth ← §borderWidth[2] = 3.0');
+        expect(e.toString(), '/dialog#borderWidth ← borderWidth[2] = 3.0');
       });
 
       test('should render a rich rule entry with all detail', () {
         const e = ProvenanceEntry(
           location: '/d#w',
           kind: ProvenanceKind.rule,
-          ruleKey: '§w',
+          ruleKey: 'w',
           variantIndex: 1,
           value: 3.0,
           selector: {'theme#id': 'dark'},
+          when: 'screenWidth < 500.0',
           inputs: {'screenWidth': 380.0},
           expression: 'screenWidth < 400.0 ? 3.0 : 2.0',
-          aliasChain: ['§a', '§w'],
+          aliasChain: ['a', 'w'],
         );
         final s = e.toString();
-        expect(s, contains('/d#w ← §w[1] = 3.0'));
+        expect(s, contains('/d#w ← w[1] = 3.0'));
         expect(s, contains('selector {theme#id: dark}'));
+        expect(s, contains('when "screenWidth < 500.0"'));
         expect(s, contains('inputs {screenWidth: 380.0}'));
         expect(s, contains('expr "screenWidth < 400.0 ? 3.0 : 2.0"'));
-        expect(s, contains('via §a → §w'));
+        expect(s, contains('via a → w'));
       });
 
       test('should skip empty selector/inputs and single-key chain', () {
         const e = ProvenanceEntry(
           location: '/n#v',
           kind: ProvenanceKind.rule,
-          ruleKey: '§v',
+          ruleKey: 'v',
           variantIndex: 0,
           value: 1.0,
           selector: {},
           inputs: {},
           expression: '1.0',
-          aliasChain: ['§v'],
+          aliasChain: ['v'],
         );
         final s = e.toString();
         expect(s, contains('expr "1.0"'));
@@ -73,9 +75,9 @@ void main() {
         const e = ProvenanceEntry(
           location: '/n#opt',
           kind: ProvenanceKind.optionalRemoval,
-          ruleKey: '§opt',
+          ruleKey: 'opt',
         );
-        expect(e.toString(), '/n#opt ← §opt (optional) removed');
+        expect(e.toString(), '/n#opt ← opt (optional) removed');
       });
     });
 
@@ -84,24 +86,26 @@ void main() {
         const e = ProvenanceEntry(
           location: '/d#w',
           kind: ProvenanceKind.rule,
-          ruleKey: '§w',
+          ruleKey: 'w',
           variantIndex: 1,
           value: 3.0,
           selector: {'theme#id': 'dark'},
+          when: 'x > 1.0',
           inputs: {'x': 380.0},
           expression: 'x',
-          aliasChain: ['§w'],
+          aliasChain: ['w'],
         );
         expect(e.toJson(), {
           'location': '/d#w',
           'kind': 'rule',
-          'ruleKey': '§w',
+          'ruleKey': 'w',
           'variantIndex': 1,
           'value': 3.0,
           'selector': {'theme#id': 'dark'},
+          'when': 'x > 1.0',
           'inputs': {'x': 380.0},
           'expression': 'x',
-          'aliasChain': ['§w'],
+          'aliasChain': ['w'],
         });
       });
 
@@ -109,14 +113,14 @@ void main() {
         const e = ProvenanceEntry(
           location: '/n#v',
           kind: ProvenanceKind.rule,
-          ruleKey: '§v',
+          ruleKey: 'v',
           variantIndex: 0,
           value: 5,
         );
         expect(e.toJson(), {
           'location': '/n#v',
           'kind': 'rule',
-          'ruleKey': '§v',
+          'ruleKey': 'v',
           'variantIndex': 0,
           'value': 5,
         });
@@ -135,12 +139,12 @@ void main() {
         const e = ProvenanceEntry(
           location: '/n#o',
           kind: ProvenanceKind.optionalRemoval,
-          ruleKey: '§o',
+          ruleKey: 'o',
         );
         expect(e.toJson(), {
           'location': '/n#o',
           'kind': 'optionalRemoval',
-          'ruleKey': '§o',
+          'ruleKey': 'o',
         });
       });
     });
@@ -156,37 +160,33 @@ void main() {
     );
 
     test('should expose an unmodifiable entry list', () {
-      final report = ResolutionReport(entries: [entry('/a#x', '§x')]);
+      final report = ResolutionReport(entries: [entry('/a#x', 'x')]);
       expect(report.entries, hasLength(1));
       expect(report.rich, isFalse);
       expect(
-        () => report.entries.add(entry('/b#y', '§y')),
+        () => report.entries.add(entry('/b#y', 'y')),
         throwsUnsupportedError,
       );
     });
 
     test('should filter entries by location (alias hops)', () {
       final report = ResolutionReport(
-        entries: [
-          entry('/a#x', '§x'),
-          entry('/a#x', '§y'),
-          entry('/b#z', '§z'),
-        ],
+        entries: [entry('/a#x', 'x'), entry('/a#x', 'y'), entry('/b#z', 'z')],
       );
-      expect(report.at('/a#x').map((e) => e.ruleKey), ['§x', '§y']);
-      expect(report.at('/b#z').map((e) => e.ruleKey), ['§z']);
+      expect(report.at('/a#x').map((e) => e.ruleKey), ['x', 'y']);
+      expect(report.at('/b#z').map((e) => e.ruleKey), ['z']);
       expect(report.at('/nope'), isEmpty);
     });
 
     test('should dump minimal and rich modes', () {
-      final minimal = ResolutionReport(entries: [entry('/a#x', '§x')]);
+      final minimal = ResolutionReport(entries: [entry('/a#x', 'x')]);
       expect(
         minimal.toString(),
         'ResolutionReport (1 entries, minimal):\n'
-        '  /a#x ← §x[0] = 1',
+        '  /a#x ← x[0] = 1',
       );
 
-      final rich = ResolutionReport(entries: [entry('/a#x', '§x')], rich: true);
+      final rich = ResolutionReport(entries: [entry('/a#x', 'x')], rich: true);
       expect(
         rich.toString(),
         startsWith('ResolutionReport (1 entries, rich):'),
@@ -195,7 +195,7 @@ void main() {
 
     test('should serialize to JSON', () {
       final report = ResolutionReport(
-        entries: [entry('/a#x', '§x')],
+        entries: [entry('/a#x', 'x')],
         rich: true,
       );
       expect(report.toJson(), {
@@ -204,7 +204,7 @@ void main() {
           {
             'location': '/a#x',
             'kind': 'rule',
-            'ruleKey': '§x',
+            'ruleKey': 'x',
             'variantIndex': 0,
             'value': 1,
           },

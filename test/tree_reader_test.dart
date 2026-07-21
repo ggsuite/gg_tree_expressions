@@ -16,7 +16,7 @@ void main() {
     List<Tree<Json>> children = const [],
   ]) => Tree<Json>(key: key, data: data, children: children);
 
-  Json ref() => {'§': '§rule'};
+  Json ref() => {'§': 'rule'};
 
   group('validateQuery()', () {
     test('should accept a parseable query', () {
@@ -27,12 +27,12 @@ void main() {
     test('should throw on an invalid query', () {
       var message = '';
       try {
-        validateQuery('a#b#c', context: 'selector of rule "§x"');
+        validateQuery('a#b#c', context: 'selector of rule "x"');
       } on TreeExpressionsException catch (e) {
         message = e.message;
       }
       expect(message, contains('Invalid query "a#b#c"'));
-      expect(message, contains('selector of rule "§x"'));
+      expect(message, contains('selector of rule "x"'));
     });
   });
 

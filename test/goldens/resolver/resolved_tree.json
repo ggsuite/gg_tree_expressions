@@ -1,0 +1,37 @@
+{
+  "key": "app",
+  "originalKey": "app",
+  "isReadOnly": false,
+  "_data": {
+    "platform": "mobile",
+    "style": "plain"
+  },
+  "_children": [
+    {
+      "key": "theme",
+      "originalKey": "theme",
+      "isReadOnly": false,
+      "_data": {
+        "id": "dark"
+      }
+    },
+    {
+      "key": "screen",
+      "originalKey": "screen",
+      "isReadOnly": false,
+      "_data": {
+        "width": 380.0
+      }
+    },
+    {
+      "key": "dialog",
+      "originalKey": "dialog",
+      "isReadOnly": false,
+      "_data": {
+        "borderWidth": 3.0,
+        "title": 16.0,
+        "gap": 8.0
+      }
+    }
+  ]
+}
