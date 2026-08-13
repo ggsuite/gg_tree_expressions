@@ -4,7 +4,7 @@ version: 1.1.0
 repository: https://github.com/ggsuite/gg_tree_expressions.git
 
 environment:
-  sdk: ">=3.11.4 <4.0.0"
+  sdk: ">=3.13.0 <4.0.0"
 
 dependencies:
   gg_json: ^4.0.1
