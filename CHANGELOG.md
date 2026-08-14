@@ -1,37 +1,48 @@
 # Changelog
 
-## [1.1.0] - 2026-07-21
+## 1.2.0 - 2026-08-14
+
+### Changed
+
+- Rework copyright headers
+
+### Fixed
+
+- Cleanup copy right headers. Update to dart 3.13. Auto fixes.
+- Cleanup copy right headers. Update to dart 3.13. Auto fixes. Setup quick-check pipeline.
+
+## 1.1.0 - 2026-07-21
 
 ### Added
 
 - Add examples, goldens and remove paragraph sign from rule names
 - Add when field for rule selectors, allowing CEL for values
 
-## [1.0.1] - 2026-07-13
+## 1.0.1 - 2026-07-13
 
 ### Changed
 
 - Update dependencies
 
-## [1.0.0] - 2026-07-10
+## 1.0.0 - 2026-07-10
 
 ### Added
 
 - Add resolveAtomic for atomic in-place resolution
 
-## [0.3.0] - 2026-07-10
+## 0.3.0 - 2026-07-10
 
 ### Changed
 
 - Verbose mode
 
-## [0.2.0] - 2026-07-09
+## 0.2.0 - 2026-07-09
 
 ### Added
 
 - `Resolver` accepts an optional `expressionCache` so resolvers built
 per fit/article share compiled expressions instead of re-parsing the
-rule book each time (warm construction \~99% cheaper).
+rule book each time (warm construction ~99% cheaper).
 - Benchmark harness under `benchmark/` (six workload profiles, JIT and
 AOT) with baselines and attribution in `benchmark/RESULTS.md`.
 
@@ -44,7 +55,7 @@ redundant deep marker check. Added a per-`select()` read cache and a
 bounded parsed-query cache. Large read-path and end-to-end speedups
 with no behavior change.
 
-## [0.1.0] - 2026-07-08
+## 0.1.0 - 2026-07-08
 
 ### Added
 
@@ -63,7 +74,7 @@ item. Strings are never references, so resolved trees stay
 re-resolvable without escaping rules.
 - Sealed exception hierarchy with typed fields
 (`UnknownRuleException`, `CircularAliasException`, ...).
-- Property-based test layer: a readQuery-vs-gg\_tree conformance
+- Property-based test layer: a readQuery-vs-gg_tree conformance
 corpus and resolver invariants (marker-free, idempotent,
 order-independent) over random trees and rule books.
 - CEL conformance fixtures (`test/fixtures/cel_conformance.json`)
@@ -75,16 +86,8 @@ pinning the supported cross-language subset.
 - Correct version in changelog for publish
 - Correct version in changelog for publish again
 
-## [0.0.2] - 2026-06-30
+## 0.0.2 - 2026-06-30
 
 ### Added
 
 - Initial boilerplate.
-
-[1.1.0]: https://github.com/ggsuite/gg_tree_expressions/compare/1.0.1...1.1.0
-[1.0.1]: https://github.com/ggsuite/gg_tree_expressions/compare/1.0.0...1.0.1
-[1.0.0]: https://github.com/ggsuite/gg_tree_expressions/compare/0.3.0...1.0.0
-[0.3.0]: https://github.com/ggsuite/gg_tree_expressions/compare/0.2.0...0.3.0
-[0.2.0]: https://github.com/ggsuite/gg_tree_expressions/compare/0.1.0...0.2.0
-[0.1.0]: https://github.com/ggsuite/gg_tree_expressions/compare/0.0.2...0.1.0
-[0.0.2]: https://github.com/ggsuite/gg_tree_expressions/releases/tag/0.0.2

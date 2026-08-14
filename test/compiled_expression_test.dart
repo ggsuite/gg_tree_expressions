@@ -1,5 +1,5 @@
 // @license
-// Copyright (c) 2026 ggsuite
+// Copyright (c) ggsuite
 //
 // Use of this source code is governed by terms that can be
 // found in the LICENSE file in the root of this package.
@@ -12,9 +12,9 @@ import 'package:gg_tree_expressions/gg_tree_expressions.dart';
 import 'package:test/test.dart';
 
 void main() {
-  final fixtures =
-      jsonDecode(File('test/fixtures/cel_conformance.json').readAsStringSync())
-          as Map<String, dynamic>;
+  final fixtures = jsonDecode(
+    File('test/fixtures/cel_conformance.json').readAsStringSync(),
+  ) as Map<String, dynamic>;
 
   Object? run(String expression, Json inputs) =>
       CompiledExpression.compile(expression).evaluate(inputs);

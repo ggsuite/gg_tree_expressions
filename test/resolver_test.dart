@@ -1,5 +1,5 @@
 // @license
-// Copyright (c) 2026 ggsuite
+// Copyright (c) ggsuite
 //
 // Use of this source code is governed by terms that can be
 // found in the LICENSE file in the root of this package.
@@ -112,9 +112,8 @@ void main() {
             {'expression': '1.0 + 2.0'},
           ],
         };
-        final (resolved, report) = resolver(
-          book,
-        ).resolveVerbose(node('root', {'v': ref('w')}), inPlace: true);
+        final (resolved, report) = resolver(book)
+            .resolveVerbose(node('root', {'v': ref('w')}), inPlace: true);
         expect(resolved.getOrNull<double>('./#v'), 3.0);
         expect(report.rich, isFalse);
         final e = report.entries.single;
@@ -130,9 +129,8 @@ void main() {
       });
 
       test('should report rich provenance for a rule (copy mode)', () {
-        final (_, report) = resolver(
-          borderBook,
-        ).resolveVerbose(appTree(), rich: true);
+        final (_, report) = resolver(borderBook)
+            .resolveVerbose(appTree(), rich: true);
         expect(report.rich, isTrue);
         final e = report.at('/dialog#borderWidth').single;
         expect(e.kind, ProvenanceKind.rule);
@@ -157,9 +155,8 @@ void main() {
         expect(eMin.value, 6);
         expect(eMin.expression, isNull);
 
-        final (_, rich) = resolver(
-          {},
-        ).resolveVerbose(tree(), inPlace: true, rich: true);
+        final (_, rich) = resolver({})
+            .resolveVerbose(tree(), inPlace: true, rich: true);
         final e = rich.entries.single;
         expect(e.expression, '2 * 3');
         expect(e.inputs, isEmpty);
@@ -179,9 +176,8 @@ void main() {
             ],
           },
         };
-        final (rMin, repMin) = resolver(
-          book,
-        ).resolveVerbose(node('root', {'m': ref('opt')}), inPlace: true);
+        final (rMin, repMin) = resolver(book)
+            .resolveVerbose(node('root', {'m': ref('opt')}), inPlace: true);
         expect(rMin.getOrNull<dynamic>('./#m'), isNull);
         final e = repMin.entries.single;
         expect(e.kind, ProvenanceKind.optionalRemoval);
@@ -571,9 +567,9 @@ void main() {
 
       test('should report unknown rules with suggestions', () {
         final e = catchException(
-          () => resolver(
-            borderBook,
-          ).resolve(node('root', {'x': ref('borderWith')})),
+          () =>
+              resolver(borderBook)
+                  .resolve(node('root', {'x': ref('borderWith')})),
         );
         expect(e, isA<UnknownRuleException>());
         expect(e!.message, contains('Unknown rule "borderWith"'));
@@ -876,16 +872,14 @@ void main() {
       };
 
       test('should apply a when-override over the base', () {
-        final resolved = resolver(
-          bookWithWhen(),
-        ).resolve(node('root', {'h': 1500.0, 'v': ref('w')}));
+        final resolved = resolver(bookWithWhen())
+            .resolve(node('root', {'h': 1500.0, 'v': ref('w')}));
         expect(resolved.getOrNull<double>('./#v'), 320.0);
       });
 
       test('should fall back to the base when the predicate is false', () {
-        final resolved = resolver(
-          bookWithWhen(),
-        ).resolve(node('root', {'h': 2500.0, 'v': ref('w')}));
+        final resolved = resolver(bookWithWhen())
+            .resolve(node('root', {'h': 2500.0, 'v': ref('w')}));
         expect(resolved.getOrNull<double>('./#v'), 560.0);
       });
 
@@ -1014,9 +1008,8 @@ void main() {
       ]);
 
       test('should evaluate a rule at a node', () {
-        final result = resolver(
-          {},
-        ).resolveRule(node('root', {'width': 2.0}), rule);
+        final result = resolver({})
+            .resolveRule(node('root', {'width': 2.0}), rule);
         expect(result, 4.0);
       });
 
@@ -1029,9 +1022,8 @@ void main() {
             'expression': '1',
           },
         ]);
-        final result = resolver(
-          {},
-        ).resolveRule(node('root', {'h': 1500.0}), gated);
+        final result = resolver({})
+            .resolveRule(node('root', {'h': 1500.0}), gated);
         expect(result, 1);
       });
 
@@ -1047,9 +1039,9 @@ void main() {
           },
         ]);
         final e = catchException(
-          () => resolver(
-            {},
-          ).resolveRule(node('root', {'a': 1, 'b': 2}), ambiguousRule),
+          () =>
+              resolver({})
+                  .resolveRule(node('root', {'a': 1, 'b': 2}), ambiguousRule),
         );
         expect(e, isA<AmbiguousVariantException>());
         expect(e!.message, contains('with the same specificity (1)'));
@@ -1064,9 +1056,9 @@ void main() {
           },
         ]);
         final message = messageOfCall(
-          () => resolver(
-            {},
-          ).resolveRule(node('root', {'u': ref('x')}), blockedRule),
+          () =>
+              resolver({})
+                  .resolveRule(node('root', {'u': ref('x')}), blockedRule),
         );
         expect(message, contains('Cannot resolve rule "w" at node "/"'));
         expect(message, contains('selector condition "#u" waits'));
@@ -1139,9 +1131,8 @@ void main() {
         final resolved = Resolver(ruleBook: book).resolve(exampleTree());
         await writeGolden('resolved_tree.json', resolved.toJson());
 
-        final (_, report) = Resolver(
-          ruleBook: book,
-        ).resolveVerbose(exampleTree(), rich: true);
+        final (_, report) = Resolver(ruleBook: book)
+            .resolveVerbose(exampleTree(), rich: true);
         await writeGolden('resolution_report.json', report.toJson());
 
         // Spot-check the outcomes captured by the goldens.
@@ -1198,15 +1189,13 @@ void main() {
       ]);
 
       test('resolves when-gated variants over a representative tree', () async {
-        final resolved = Resolver(
-          ruleBook: RuleBook.fromJson(whenBook()),
-        ).resolve(cabinetTree());
+        final resolved = Resolver(ruleBook: RuleBook.fromJson(whenBook()))
+            .resolve(cabinetTree());
         await writeGolden('resolved_when_tree.json', resolved.toJson());
 
         // Rich report now carries the winning variant's `when`.
-        final (_, report) = Resolver(
-          ruleBook: RuleBook.fromJson(whenBook()),
-        ).resolveVerbose(cabinetTree(), rich: true);
+        final (_, report) = Resolver(ruleBook: RuleBook.fromJson(whenBook()))
+            .resolveVerbose(cabinetTree(), rich: true);
         await writeGolden('resolution_report_when.json', report.toJson());
 
         // Spot-check the branches the goldens capture.

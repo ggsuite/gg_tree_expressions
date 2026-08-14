@@ -1,5 +1,5 @@
 // @license
-// Copyright (c) 2026 ggsuite
+// Copyright (c) ggsuite
 //
 // Use of this source code is governed by terms that can be
 // found in the LICENSE file in the root of this package.
@@ -77,8 +77,11 @@ class SelectAmbiguous extends SelectResult {
 /// selection: [MatchSuccess] (holds), [MatchFailure] (does not), or
 /// [MatchBlocked] (an input reads a still-unresolved value). Injected by
 /// the resolver so [Rule.select] needs no CEL dependency of its own.
-typedef WhenEvaluator =
-    MatchResult Function(RuleVariant variant, Tree<Json> node, int index);
+typedef WhenEvaluator = MatchResult Function(
+  RuleVariant variant,
+  Tree<Json> node,
+  int index,
+);
 
 /// A selector-matching (or selector-blocked) variant kept during
 /// [Rule.select], grouped by effective specificity. `selectorBlock` is
