@@ -7,7 +7,7 @@ environment:
   sdk: ">=3.13.0 <4.0.0"
 
 dependencies:
-  gg_json: ^4.1.0
+  gg_json: ^4.2.0
   gg_tree: ^2.7.0
 
   antlr4: ^4.13.2
