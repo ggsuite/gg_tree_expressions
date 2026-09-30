@@ -1,0 +1,8 @@
+{
+  "ruleKey": "borderHelp",
+  "variantIndex": 0,
+  "value": {
+    "unit": "px",
+    "text": "Width of the dialog border."
+  }
+}

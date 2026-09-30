@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `value` variants: a variant may carry a literal, marker-free JSON
+`value` instead of a CEL `expression` (exactly one of the two).
+- `Resolver.annotate` / `Resolver.annotateNode` and the new `Annotation`
+class apply a rule book push-style: every rule's winning variant
+annotates every node. Requires a resolved tree.
+- Add value variants and annotation books
+
+### Changed
+
+- **Breaking:** `RuleVariant.expression` is now `String?` (null for
+`value` variants); `RuleVariant` gains `value` and `hasValue`.
+
 ## 1.2.0 - 2026-08-14
 
 ### Changed

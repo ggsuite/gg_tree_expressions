@@ -6,9 +6,10 @@ rules whose CEL expressions evaluate in node context; one
 (ggsuite), no domain-specific dependencies.
 
 **Read `doc/architecture.md` first** — §12 has the decision log
-(D1–D14), §13 the implementation decisions, corrections, and the
+(D1–D15), §13 the implementation decisions, corrections, and the
 post-review revisions (§13.4 review fixes, §13.5/§13.6 format
-revisions, §13.7 ambiguous-tie error, §13.8 `when` predicate).
+revisions, §13.7 ambiguous-tie error, §13.8 `when` predicate, §13.9
+`value` variants + annotation books).
 Do not trust older material (an older internal blog post,
 pre-§13.5 docs): it shows `"§name"` **string** references, which no
 longer exist. Pre-§13.6 material keys rules with a leading `§`
@@ -37,6 +38,17 @@ identifiers.
   `2*conditions + (when?1:0)`, so a `when` breaks same-count ties and
   beats the base; it gives ranges/OR that equality can't. Shares the
   variant's `inputs`; `when`-free books behave exactly as before.
+- A variant has exactly one of `expression` (CEL) or `value` (§13.9): a
+  non-null, **marker-free** JSON literal, deep-copied on every use
+  (never hand out the book's instance). No inputs are bound for a value
+  variant, so its `inputs` only serve its `when`. `RuleVariant.expression`
+  is therefore `String?`.
+- Annotation books (skill/term books): `Resolver.annotate(tree)` /
+  `annotateNode(node)` *push* every rule to every node; the winning
+  variant annotates it, no match = no annotation (`optional` is
+  irrelevant). Needs a **resolved** tree — a blocked read throws
+  `ResolveException` (annotate has no worklist to defer). Never mutates;
+  reuses `_select`/`_bindResultInputs`/`_evaluate`, no second engine.
 - All errors are subtypes of the sealed `TreeExpressionsException`
   (typed fields; tests should assert types, not only message text).
 

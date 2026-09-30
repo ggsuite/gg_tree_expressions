@@ -83,6 +83,33 @@ void main() {
         expect(e.message, contains('Syntax error'));
       });
 
+      test('should compile only the expressions that exist', () {
+        // A value that merely looks like broken CEL is data, not source.
+        final cache = <String, CompiledExpression>{};
+        Resolver(
+          ruleBook: RuleBook.fromJson({
+            'doc': [
+              {'value': '1 +'},
+              {'expression': '2.0'},
+            ],
+          }),
+          expressionCache: cache,
+        );
+        expect(cache.keys, ['2.0']);
+      });
+
+      test('should still compile the when of a value variant eagerly', () {
+        final e = catchException(
+          () => resolver({
+            'doc': [
+              {'when': '1 +', 'value': 'x'},
+            ],
+          }),
+        );
+        expect(e, isA<ExpressionException>());
+        expect(e!.message, contains('variant 0, "when"'));
+      });
+
       test('should share an injected expression cache', () {
         final cache = <String, CompiledExpression>{};
         final book = RuleBook.fromJson({
@@ -999,6 +1026,202 @@ void main() {
       });
     });
 
+    group('resolve() — value variants', () {
+      Json docBook() => {
+        'doc': [
+          {
+            'value': {
+              'keys': ['width'],
+            },
+          },
+          {
+            'selector': {'#kind': 'door'},
+            'value': ['door', 'docs'],
+          },
+        ],
+      };
+
+      test('should write the literal value of the winning variant', () {
+        final resolved = resolver(docBook())
+            .resolve(node('root', {'kind': 'door', 'x': ref('doc')}));
+        expect(resolved.data['x'], ['door', 'docs']);
+
+        final base = resolver(docBook())
+            .resolve(node('root', {'x': ref('doc')}));
+        expect(base.data['x'], {
+          'keys': ['width'],
+        });
+      });
+
+      test('should resolve scalar values, including falsy ones', () {
+        final resolved =
+            resolver({
+              'off': [
+                {'value': false},
+              ],
+              'zero': [
+                {'value': 0},
+              ],
+              'empty': [
+                {'value': ''},
+              ],
+            }).resolve(
+              node('root', {
+                'a': ref('off'),
+                'b': ref('zero'),
+                'c': ref('empty'),
+              }),
+            );
+        expect(resolved.data, {'a': false, 'b': 0, 'c': ''});
+      });
+
+      test('should write an independent deep copy at every use', () {
+        final r = resolver(docBook());
+        final tree = node('root', {'x': ref('doc'), 'y': ref('doc')});
+        final resolved = r.resolve(tree);
+
+        final x = resolved.data['x'] as Map<String, dynamic>;
+        (x['keys'] as List<dynamic>).add('height');
+
+        // Neither the sibling, the book, nor a later resolve is affected.
+        final pristine = {
+          'keys': ['width'],
+        };
+        expect(resolved.data['y'], pristine);
+        expect(r.ruleBook.toJson()['doc'], docBook()['doc']);
+        expect(r.resolve(tree).data['x'], pristine);
+      });
+
+      test('should copy list values as well', () {
+        final r = resolver({
+          'list': [
+            {
+              'value': [
+                'a',
+                ['b'],
+              ],
+            },
+          ],
+        });
+        final resolved = r.resolve(node('root', {'x': ref('list')}));
+        ((resolved.data['x'] as List<dynamic>)[1] as List<dynamic>).add('c');
+        expect(r.resolve(node('root', {'x': ref('list')})).data['x'], [
+          'a',
+          ['b'],
+        ]);
+      });
+
+      test('should honour a when predicate on a value variant', () {
+        final book = {
+          'size': [
+            {'value': 'normal'},
+            {
+              'when': 'h > 2000.0',
+              'inputs': {'h': '#height'},
+              'value': 'tall',
+            },
+          ],
+        };
+        final tall = resolver(book)
+            .resolve(node('root', {'height': 2400.0, 'x': ref('size')}));
+        final short = resolver(book)
+            .resolve(node('root', {'height': 700.0, 'x': ref('size')}));
+        expect(tall.data['x'], 'tall');
+        expect(short.data['x'], 'normal');
+      });
+
+      test('should defer a value variant whose when reads a marker', () {
+        // `x` comes first, so its `when` input is unresolved on round one.
+        final resolved = resolver({
+          'h': [
+            {'value': 2400.0},
+          ],
+          'size': [
+            {'value': 'normal'},
+            {
+              'when': 'h > 2000.0',
+              'inputs': {'h': './#height'},
+              'value': 'tall',
+            },
+          ],
+        }).resolve(node('root', {'x': ref('size'), 'height': ref('h')}));
+        expect(resolved.data['x'], 'tall');
+      });
+
+      test('should not bind inputs just for the value of a variant', () {
+        // A value variant's `inputs` only feed `when`; there is none.
+        final resolved = resolver({
+          'doc': [
+            {
+              'inputs': {'ghost': '#missing'},
+              'value': 'fine',
+            },
+          ],
+        }).resolve(node('root', {'x': ref('doc')}));
+        expect(resolved.data['x'], 'fine');
+      });
+
+      test('should validate resultType for value variants', () {
+        final book = {
+          'n': {
+            'resultType': 'number',
+            'variants': [
+              {'value': 'nope'},
+            ],
+          },
+        };
+        final message = messageOfCall(
+          () => resolver(book).resolve(node('root', {'x': ref('n')})),
+        );
+        expect(message, contains('returned nope (String)'));
+        expect(message, contains('resultType "number"'));
+
+        final ok = resolver({
+          'n': {
+            'resultType': 'map',
+            'variants': [
+              {
+                'value': {'a': 1},
+              },
+            ],
+          },
+        }).resolve(node('root', {'x': ref('n')}));
+        expect(ok.data['x'], {'a': 1});
+      });
+
+      test('should resolve value variants via resolveAtomic', () {
+        final root = node('root', {'x': ref('doc')});
+        resolver(docBook()).resolveAtomic(root);
+        expect(root.data['x'], {
+          'keys': ['width'],
+        });
+      });
+
+      test('should report value provenance without an expression', () {
+        final (_, minimal) = resolver(docBook())
+            .resolveVerbose(node('root', {'kind': 'door', 'x': ref('doc')}));
+        final eMin = minimal.entries.single;
+        expect(eMin.kind, ProvenanceKind.rule);
+        expect(eMin.ruleKey, 'doc');
+        expect(eMin.variantIndex, 1);
+        expect(eMin.value, ['door', 'docs']);
+        expect(eMin.expression, isNull);
+
+        final (_, rich) = resolver(docBook()).resolveVerbose(
+          node('root', {'kind': 'door', 'x': ref('doc')}),
+          rich: true,
+        );
+        final e = rich.entries.single;
+        expect(e.value, ['door', 'docs']);
+        expect(e.selector, {'#kind': 'door'});
+        expect(e.expression, isNull);
+        expect(e.inputs, isEmpty);
+        expect(e.aliasChain, ['doc']);
+        expect(e.toJson().containsKey('expression'), isFalse);
+        expect(e.toString(), isNot(contains('expr')));
+      });
+    });
+
     group('resolveRule()', () {
       final rule = Rule.fromJson('w', [
         {
@@ -1011,6 +1234,23 @@ void main() {
         final result = resolver({})
             .resolveRule(node('root', {'width': 2.0}), rule);
         expect(result, 4.0);
+      });
+
+      test('should return a fresh copy of a value variant', () {
+        final valueRule = Rule.fromJson('doc', [
+          {
+            'value': {
+              'keys': ['width'],
+            },
+          },
+        ]);
+        final first =
+            resolver({}).resolveRule(node('root', {}), valueRule)!
+                as Map<String, dynamic>;
+        (first['keys'] as List<dynamic>).add('height');
+        expect(resolver({}).resolveRule(node('root', {}), valueRule), {
+          'keys': ['width'],
+        });
       });
 
       test('should evaluate a when-gated variant', () {
@@ -1206,6 +1446,448 @@ void main() {
         expect(child('tall').get<bool>('./#isCompact'), isFalse);
         expect(child('short').get<bool>('./#isCompact'), isTrue); // h<800
         expect(child('wide').get<bool>('./#isCompact'), isTrue); // w>1200
+      });
+    });
+
+    group('annotate()', () {
+      // Book: a static `value`, a computed `expression`, a gated `value`.
+      Json annotationBook() => {
+        'role': [
+          {'value': 'node'},
+          {
+            'selector': {'#kind': 'dialog'},
+            'value': 'container',
+          },
+        ],
+        'keys': [
+          {
+            'selector': {'#kind': 'dialog'},
+            'value': {
+              'targets': ['width', 'height'],
+              'text': 'Size keys a rule may set.',
+            },
+          },
+        ],
+        'area': [
+          {
+            'selector': {'#kind': 'panel'},
+            'inputs': {'w': './#width', 'h': './#height'},
+            'expression': 'w * h',
+          },
+        ],
+        'wide': [
+          {
+            'when': 'w > 500.0',
+            'inputs': {
+              'w': {'query': './#width', 'default': 0.0},
+            },
+            'value': true,
+          },
+        ],
+      };
+
+      Tree<Json> uiTree() => node('app', {}, [
+        node(
+          'dialog',
+          {'kind': 'dialog', 'width': 800.0},
+          [
+            node('okButton', {'kind': 'button'}),
+          ],
+        ),
+        node('sidebar', {'kind': 'panel', 'width': 300.0, 'height': 400.0}),
+      ]);
+
+      Map<String, List<Map<String, dynamic>>> asJson(
+        Map<String, List<Annotation>> annotations,
+      ) => {
+        for (final MapEntry(:key, :value) in annotations.entries)
+          key: [for (final a in value) a.toJson()],
+      };
+
+      test('annotates a small tree with a small book (golden)', () async {
+        final annotations = resolver(annotationBook()).annotate(uiTree());
+        await writeGolden('annotations.json', asJson(annotations));
+
+        expect(annotations.keys, [
+          '/',
+          '/dialog',
+          '/dialog/okButton',
+          '/sidebar',
+        ]);
+        expect(annotations['/dialog']!.map((a) => a.ruleKey), [
+          'role',
+          'keys',
+          'wide',
+        ]);
+        expect(annotations['/sidebar']!.last.value, 120000.0);
+      });
+
+      test('should pick base or override per node', () {
+        final result = resolver(annotationBook()).annotate(uiTree());
+
+        // Visit order: top-down, root first.
+        expect(result.keys, ['/', '/dialog', '/dialog/okButton', '/sidebar']);
+
+        Object? role(String path) =>
+            result[path]!.singleWhere((a) => a.ruleKey == 'role').toJson();
+        expect(role('/'), {
+          'ruleKey': 'role',
+          'variantIndex': 0,
+          'value': 'node',
+        });
+        expect(role('/dialog'), {
+          'ruleKey': 'role',
+          'variantIndex': 1,
+          'value': 'container',
+        });
+        expect(role('/dialog/okButton'), {
+          'ruleKey': 'role',
+          'variantIndex': 0,
+          'value': 'node',
+        });
+      });
+
+      test('should list a nodes annotations in rule book order', () {
+        final result = resolver(annotationBook()).annotate(uiTree());
+        expect(result['/dialog']!.map((a) => a.ruleKey), [
+          'role',
+          'keys',
+          'wide',
+        ]);
+        expect(result['/sidebar']!.map((a) => a.ruleKey), ['role', 'area']);
+      });
+
+      test('should evaluate expression variants with bound inputs', () {
+        final result = resolver(annotationBook()).annotate(uiTree());
+        final area = result['/sidebar']!.singleWhere(
+          (a) => a.ruleKey == 'area',
+        );
+        expect(area.value, 120000.0);
+        expect(area.variantIndex, 0);
+      });
+
+      test('should apply when variants', () {
+        final result = resolver(annotationBook()).annotate(uiTree());
+        // 800 > 500 applies; 300 and the default 0.0 do not.
+        expect(result['/dialog']!.any((a) => a.ruleKey == 'wide'), isTrue);
+        expect(result['/sidebar']!.any((a) => a.ruleKey == 'wide'), isFalse);
+        expect(
+          result['/dialog/okButton']!.any((a) => a.ruleKey == 'wide'),
+          isFalse,
+        );
+      });
+
+      test('should omit nodes nothing applies to, optional or not', () {
+        // Neither rule has a base variant; the first is not optional.
+        final result = resolver({
+          'keys': [
+            {
+              'selector': {'#kind': 'dialog'},
+              'value': 'dialog keys',
+            },
+          ],
+          'hint': {
+            'optional': true,
+            'variants': [
+              {
+                'selector': {'#kind': 'nope'},
+                'value': 'never',
+              },
+            ],
+          },
+        }).annotate(uiTree());
+        expect(asJson(result), {
+          '/dialog': [
+            {'ruleKey': 'keys', 'variantIndex': 0, 'value': 'dialog keys'},
+          ],
+        });
+      });
+
+      test('should return an empty map when nothing applies anywhere', () {
+        expect(resolver({}).annotate(uiTree()), isEmpty);
+      });
+
+      test('should throw on ambiguous same-specificity matches', () {
+        final e = catchException(
+          () => resolver({
+            'role': [
+              {'value': 'a'},
+              {'value': 'b'},
+            ],
+          }).annotate(uiTree()),
+        );
+        expect(e, isA<AmbiguousVariantException>());
+        final ambiguous = e! as AmbiguousVariantException;
+        expect(ambiguous.ruleKey, 'role');
+        expect(ambiguous.location, '/');
+        expect(ambiguous.variantIndices, [0, 1]);
+        expect(ambiguous.message, contains('the winner is ambiguous'));
+      });
+
+      test('should validate resultType of value and expression results', () {
+        final valueBook = {
+          'n': {
+            'resultType': 'number',
+            'variants': [
+              {'value': 'nope'},
+            ],
+          },
+        };
+        final message = messageOfCall(
+          () => resolver(valueBook).annotate(node('root', {})),
+        );
+        expect(message, contains('Rule "n" (variant 0) at "/" returned nope'));
+        expect(message, contains('resultType "number"'));
+
+        final expressionBook = {
+          'n': {
+            'resultType': 'number',
+            'variants': [
+              {'expression': "'nope'"},
+            ],
+          },
+        };
+        expect(
+          catchException(
+            () => resolver(expressionBook).annotate(node('root', {})),
+          ),
+          isA<ResolveException>(),
+        );
+      });
+
+      test('should fail on a missing input of an expression variant', () {
+        final e = catchException(
+          () => resolver({
+            'x': [
+              {
+                'inputs': {'w': '#missing'},
+                'expression': 'w',
+              },
+            ],
+          }).annotate(node('root', {})),
+        );
+        expect(e, isA<MissingInputException>());
+        expect(e!.message, contains('Missing input "w" of rule "x"'));
+      });
+
+      test('should wrap expression evaluation errors', () {
+        final e = catchException(
+          () => resolver({
+            'x': [
+              {'expression': 'ghost'},
+            ],
+          }).annotate(node('root', {})),
+        );
+        expect(e, isA<ExpressionException>());
+        expect(
+          e!.message,
+          contains('While resolving rule "x" (variant 0) at "/"'),
+        );
+      });
+
+      test('should not read inputs of a value variant without a when', () {
+        final result = resolver({
+          'doc': [
+            {
+              'inputs': {'ghost': '#missing'},
+              'value': 'fine',
+            },
+          ],
+        }).annotate(node('root', {}));
+        expect(asJson(result), {
+          '/': [
+            {'ruleKey': 'doc', 'variantIndex': 0, 'value': 'fine'},
+          ],
+        });
+      });
+
+      group('on a tree with unresolved markers', () {
+        test('should throw when a selector reads a marker', () {
+          final e = catchException(
+            () =>
+                resolver(annotationBook())
+                    .annotate(node('root', {'kind': ref('other')})),
+          );
+          expect(e, isA<ResolveException>());
+          expect(e, isNot(isA<StuckException>()));
+          expect(
+            e!.message,
+            contains('Cannot annotate rule "role" at node "/"'),
+          );
+          expect(e.message, contains('the query "#kind" waits for the'));
+          expect(e.message, contains('unresolved value at "/#kind"'));
+          expect(e.message, contains('annotate() expects a resolved tree'));
+        });
+
+        test('should throw when an input reads a marker', () {
+          final message = messageOfCall(
+            () => resolver({
+              'x': [
+                {
+                  'inputs': {'w': '#width'},
+                  'expression': 'w',
+                },
+              ],
+            }).annotate(node('root', {'width': ref('other')})),
+          );
+          expect(message, contains('Cannot annotate rule "x" at node "/"'));
+          expect(message, contains('input "w" of rule "x" (variant 0)'));
+          expect(message, contains('waits for the unresolved value at'));
+          expect(message, contains('annotate() expects a resolved tree'));
+        });
+
+        test('should throw when a when-input reads a marker', () {
+          final message = messageOfCall(
+            () => resolver({
+              'x': [
+                {
+                  'when': 'w > 1.0',
+                  'inputs': {'w': '#width'},
+                  'value': true,
+                },
+              ],
+            }).annotate(node('root', {'width': ref('other')})),
+          );
+          expect(message, contains('Cannot annotate rule "x" at node "/"'));
+          expect(message, contains('annotate() expects a resolved tree'));
+        });
+
+        test('should annotate once the tree is resolved', () {
+          final r = resolver({
+            ...annotationBook(),
+            'kindRule': [
+              {'value': 'dialog'},
+            ],
+          });
+          final tree = node('root', {'kind': ref('kindRule')});
+          expect(() => r.annotate(tree), throwsA(isA<ResolveException>()));
+
+          final annotated = r.annotate(r.resolve(tree));
+          expect(annotated['/']!.map((a) => a.ruleKey), [
+            'role',
+            'keys',
+            'kindRule',
+          ]);
+        });
+      });
+
+      test('should not mutate the tree', () {
+        final tree = uiTree();
+        final before = tree.toJson();
+        final result = resolver(annotationBook()).annotate(tree);
+        ((result['/dialog']!.singleWhere((a) => a.ruleKey == 'keys').value!
+                    as Map<String, dynamic>)['targets']
+                as List<dynamic>)
+            .add('depth');
+        expect(deeplEquals(tree.toJson(), before), isTrue);
+      });
+
+      test('should return independent copies of value variants', () {
+        final r = resolver(annotationBook());
+        Map<String, dynamic> keys() =>
+            r
+                    .annotate(uiTree())['/dialog']!
+                    .singleWhere((a) => a.ruleKey == 'keys')
+                    .value!
+                as Map<String, dynamic>;
+
+        final first = keys();
+        (first['targets'] as List<dynamic>).add('depth');
+        first['text'] = 'changed';
+
+        final pristine = {
+          'targets': ['width', 'height'],
+          'text': 'Size keys a rule may set.',
+        };
+        expect(keys(), pristine);
+        expect(r.ruleBook.toJson()['keys'], annotationBook()['keys']);
+      });
+
+      test('should work on a subtree and still see its ancestors', () {
+        final tree = node(
+          'app',
+          {'kind': 'dialog'},
+          [
+            node('inner', {}, [node('leaf', {})]),
+          ],
+        );
+        final result = resolver({
+          'role': [
+            {'value': 'plain'},
+            {
+              'selector': {'#kind': 'dialog'},
+              'value': 'inherited',
+            },
+          ],
+        }).annotate(tree.childByPath('inner'));
+
+        expect(result.keys, ['/inner', '/inner/leaf']);
+        expect(result['/inner']!.single.value, 'inherited');
+        expect(result['/inner/leaf']!.single.value, 'inherited');
+      });
+
+      test('should not interfere with resolve on the same resolver', () {
+        final r = resolver({
+          ...borderBook,
+          'role': [
+            {'value': 'node'},
+          ],
+        });
+        final resolved = r.resolve(appTree());
+        expect(r.annotate(resolved).keys, contains('/dialog/okButton'));
+
+        // Annotating leaves no trace in the verbose report.
+        final (again, report) = r.resolveVerbose(appTree());
+        expect(report.entries, hasLength(1));
+        expect(again.childByPath('dialog').data['borderWidth'], 3.0);
+      });
+    });
+
+    group('annotateNode()', () {
+      final book = {
+        'role': [
+          {'value': 'node'},
+          {
+            'selector': {'#kind': 'dialog'},
+            'value': 'container',
+          },
+        ],
+      };
+
+      test('should annotate exactly the given node', () {
+        final tree = node('app', {'kind': 'dialog'}, [node('child', {})]);
+        final r = resolver(book);
+
+        final atRoot = r.annotateNode(tree);
+        expect(atRoot.map((a) => a.toJson()), [
+          {'ruleKey': 'role', 'variantIndex': 1, 'value': 'container'},
+        ]);
+
+        // The child inherits `kind` through the ancestor chain.
+        expect(
+          r.annotateNode(tree.childByPath('child')).single.value,
+          'container',
+        );
+      });
+
+      test('should return an empty list when nothing applies', () {
+        final r = resolver({
+          'keys': [
+            {
+              'selector': {'#kind': 'dialog'},
+              'value': 'x',
+            },
+          ],
+        });
+        expect(r.annotateNode(node('root', {})), isEmpty);
+      });
+
+      test('should throw on unresolved markers like annotate', () {
+        final e = catchException(
+          () => resolver(book).annotateNode(node('root', {'kind': ref('k')})),
+        );
+        expect(e, isA<ResolveException>());
+        expect(e!.message, contains('annotate() expects a resolved tree'));
       });
     });
   });

@@ -124,6 +124,7 @@ void main() {
         expect(message, contains('  - selector'));
         expect(message, contains('  - inputs'));
         expect(message, contains('  - expression'));
+        expect(message, contains('  - value'));
         expect(message, contains('  - description'));
       });
 
@@ -140,7 +141,10 @@ void main() {
         );
         expect(
           message,
-          contains('Every variant needs a CEL expression string.'),
+          contains(
+            'Every variant needs exactly one of "expression" (a CEL '
+            'string) or "value" (a JSON literal).',
+          ),
         );
       });
 
@@ -424,6 +428,150 @@ void main() {
         };
         final variant = RuleVariant.fromJson(json, context: 'x');
         expect(variant.toJson(), json);
+      });
+    });
+
+    group('value', () {
+      String messageOfParse(Object? json) {
+        try {
+          RuleVariant.fromJson(json, context: 'test variant');
+        } on TreeExpressionsException catch (e) {
+          return e.message;
+        }
+        return '';
+      }
+
+      test('constructor builds a value variant without an expression', () {
+        final variant = RuleVariant(value: {'a': 1});
+        expect(variant.hasValue, isTrue);
+        expect(variant.value, {'a': 1});
+        expect(variant.expression, isNull);
+      });
+
+      test('constructor marks an expression variant as no value', () {
+        final variant = RuleVariant(expression: 'x');
+        expect(variant.hasValue, isFalse);
+        expect(variant.value, isNull);
+      });
+
+      test('constructor requires exactly one of expression and value', () {
+        expect(() => RuleVariant(), throwsA(isA<AssertionError>()));
+        expect(
+          () => RuleVariant(expression: 'x', value: 1),
+          throwsA(isA<AssertionError>()),
+        );
+      });
+
+      test('fromJson parses any non-null JSON literal', () {
+        for (final literal in <Object>[
+          {
+            'unit': 'px',
+            'keys': ['a', 'b'],
+          },
+          ['a', 1, true],
+          'text',
+          0,
+          1.5,
+          false,
+          '',
+          '§ 5 Abs. 2',
+        ]) {
+          final variant = RuleVariant.fromJson({
+            'value': literal,
+          }, context: 'test variant');
+          expect(variant.hasValue, isTrue, reason: '$literal');
+          expect(variant.value, literal);
+          expect(variant.expression, isNull);
+        }
+      });
+
+      test('fromJson keeps selector, when, inputs and description', () {
+        final variant = RuleVariant.fromJson({
+          'selector': {'#kind': 'door'},
+          'when': 'h > 1.0',
+          'inputs': {'h': '#h'},
+          'value': 'tall door',
+          'description': 'Docs.',
+        }, context: 'test variant');
+        expect(variant.selector.conditions, {'#kind': 'door'});
+        expect(variant.when, 'h > 1.0');
+        expect(variant.inputs.keys, ['h']);
+        expect(variant.value, 'tall door');
+        expect(variant.description, 'Docs.');
+      });
+
+      test('fromJson rejects a variant with both expression and value', () {
+        final message = messageOfParse({'expression': '1', 'value': 1});
+        expect(
+          message,
+          contains('test variant has both "expression" and "value".'),
+        );
+        expect(message, contains('exactly one'));
+      });
+
+      test('fromJson rejects a variant with neither', () {
+        final message = messageOfParse({'selector': <String, Object>{}});
+        expect(message, contains('Missing or empty "expression"'));
+        expect(message, contains('or "value" (a JSON literal)'));
+      });
+
+      test('fromJson rejects a null value (gg_tree: null is missing)', () {
+        final message = messageOfParse({'value': null});
+        expect(message, contains('The "value" of test variant must not be'));
+        expect(message, contains('gg_tree treats null as missing'));
+      });
+
+      test('fromJson rejects a value that is not JSON', () {
+        final message = messageOfParse({'value': DateTime(2026)});
+        expect(message, contains('The "value" of test variant is not a JSON'));
+        expect(message, contains('DateTime'));
+      });
+
+      test('fromJson rejects a value containing a marker', () {
+        for (final bad in <Object>[
+          {'§': 'rule'},
+          {'§expression': '1'},
+          {
+            'text': [
+              'fine',
+              {'§': 'rule'},
+            ],
+          },
+          {
+            'nested': {'§typo': 1},
+          },
+        ]) {
+          final message = messageOfParse({'value': bad});
+          expect(message, contains('The "value" of test variant contains a'));
+          expect(message, contains('would be read as a reference'));
+          expect(message, contains('Encode marker examples as strings.'));
+        }
+      });
+
+      test('fromJson accepts marker examples encoded as strings', () {
+        final variant = RuleVariant.fromJson({
+          'value': {'example': '{"§": "borderWidth"}'},
+        }, context: 'test variant');
+        expect(variant.value, {'example': '{"§": "borderWidth"}'});
+      });
+
+      test('toJson emits value instead of expression and round-trips', () {
+        final json = {
+          'selector': {'#type': 'door'},
+          'when': 'h > 1.0',
+          'inputs': {'h': '#h'},
+          'value': {
+            'keys': ['width'],
+          },
+          'description': 'Round trip.',
+        };
+        final variant = RuleVariant.fromJson(json, context: 'x');
+        expect(variant.toJson(), json);
+        expect(variant.toJson().containsKey('expression'), isFalse);
+
+        final copy = RuleVariant.fromJson(variant.toJson(), context: 'copy');
+        expect(copy.toJson(), json);
+        expect(copy.value, variant.value);
       });
     });
   });

@@ -168,31 +168,36 @@ cannot carry `optional`/`resultType`.
 ## 3. Variants
 
 A variant is one concrete definition of a rule: an optional selector,
-optional inputs, and exactly one expression.
+optional inputs, and exactly one result — either a CEL `expression` or a
+literal `value`.
 
 ```jsonc
 {
   "selector":    { <treeQuery>: <literal>, ... },   // optional
   "when":        "<CEL bool predicate>",             // optional (§4.6)
   "inputs":      { <identifier>: <query|longForm>, ... },  // optional
-  "expression":  "<CEL expression>",                // REQUIRED
+  "expression":  "<CEL expression>",                // exactly one of
+  "value":       <any non-null JSON>,               //   expression / value
   "description": "free text"                         // optional, docs only
 }
 ```
 
 Allowed keys are **exactly** `selector`, `when`, `inputs`,
-`expression`, `description`. Any other key → `SchemaException`.
+`expression`, `value`, `description`. Any other key → `SchemaException`.
+Giving both `expression` and `value`, or neither, is also a
+`SchemaException`.
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `expression` | string (CEL) | **yes** | Must be non-empty after trimming. Computes the result. |
+| `expression` | string (CEL) | **one of** `expression` / `value` | Must be non-empty after trimming. Computes the result. |
+| `value` | any non-null JSON | **one of** `expression` / `value` | A literal result, written as a fresh deep copy on every use. `null` is rejected (gg_tree treats null as missing). Must **not** contain a marker — a map with a `§`-prefixed key would be read as a reference or inline expression, so write marker *examples* as strings. Mostly used for static documentation in annotation books (§20). |
 | `selector` | object | no | Equality conditions for this variant to apply. Absent/empty ⇒ **base variant** (specificity 0, matches everywhere). |
 | `when` | string (CEL) | no | A bool predicate that must **also** hold for the variant to apply (§4.6). For ranges/comparisons/OR that equality cannot express. |
-| `inputs` | object | no | Binds CEL identifiers to tree queries, shared by `when` and `expression`. Absent ⇒ no inputs. |
+| `inputs` | object | no | Binds CEL identifiers to tree queries, shared by `when` and `expression`. Absent ⇒ no inputs. On a `value` variant they only serve its `when`. |
 | `description` | string | no | Documentation only; ignored at runtime. |
 
 A variant with **no** selector and **no** inputs — `{"expression":
-"42"}` — is a valid constant base variant.
+"42"}` or `{"value": 42}` — is a valid constant base variant.
 
 ---
 
@@ -730,9 +735,10 @@ them. Failures are typed subclasses of `TreeExpressionsException`.
       `number|string|bool|list|map`.
 
 **Variants**
-- [ ] Only `selector` / `when` / `inputs` / `expression` /
+- [ ] Only `selector` / `when` / `inputs` / `expression` / `value` /
       `description`.
-- [ ] `expression` present and non-empty.
+- [ ] Exactly one of `expression` (present, non-empty) or `value`
+      (non-null JSON, no `§`-prefixed map key anywhere inside).
 - [ ] `description`, if present, is a string.
 
 **Selectors**
@@ -1186,6 +1192,61 @@ sensible default otherwise?
 
 ---
 
+## 20. Annotation books (skill/term books)
+
+A rule book can also be applied **push-style**. Instead of tree data
+*pulling* one rule with a `{"§": …}` marker, `Resolver.annotate(tree)`
+*pushes* **every** rule of the book to **every** node; the rule's
+winning variant at a node *annotates* that node. Typical uses: a **skill
+book** (per node: what it can do, which keys a rule may target, which
+queries are readable from it) and a **term book** (glossary: term →
+synonyms / meaning). Both are ordinary rule books — same format, same
+selectors, same specificity — whose variants mostly carry a literal
+`value` (§3) instead of an `expression`.
+
+```jsonc
+{
+  "targets": [
+    { "selector": { "./#kind": "dialog" },
+      "value": { "keys": ["width", "height"], "text": "Size keys." } }
+  ],
+  "role": [
+    { "value": "node" },                                  // base: everywhere
+    { "selector": { "./#kind": "dialog" }, "value": "container" }
+  ]
+}
+```
+
+`annotate` returns `{nodePath: [Annotation(ruleKey, variantIndex,
+value), …]}` — per node in book key order, nodes without annotations
+omitted. `annotateNode(node)` annotates one node (e.g. the root, for a
+term book).
+
+Semantics authors rely on:
+
+- **No matching variant ⇒ the rule simply does not apply** at that node.
+  Every rule is implicitly optional here (`optional` is irrelevant), so a
+  rule without a base variant annotates only where its selectors match.
+  A base variant annotates every node.
+- **Anchor selectors with `./`.** Every node is tested, and `#kind`
+  searches upward — so it also matches every *descendant* of a dialog
+  that has no `kind` of its own. Use `./#kind` (own node only) unless
+  the rule should really apply to the whole subtree.
+- **Selection is unchanged**: highest effective specificity wins;
+  same-specificity ties are an `AmbiguousVariantException`, and one
+  ambiguous node fails the whole call.
+- **The tree must already be resolved.** A selector, `when` or input that
+  still reads a marker throws a `ResolveException` ("call resolve()
+  first"). Resolve, then annotate.
+- **`value` is data**: it is deep-copied per annotation and must be
+  marker-free; write marker examples as strings, e.g. `"{\"§\":
+  \"rule\"}"`. An `expression` variant works too and is evaluated with
+  its inputs exactly as in `resolve`; `resultType` validates both.
+- The tree is never mutated, and any subtree can be annotated (queries
+  still see its ancestors).
+
+---
+
 ## Appendix A — JSON shape cheat sheet
 
 ```jsonc
@@ -1205,7 +1266,8 @@ sensible default otherwise?
   "when":        "<CEL bool predicate>",                    // optional
   "inputs":      { "<ident>": "<query>"                     // optional
                             | { "query": "<query>", "default": <json> }, ... },
-  "expression":  "<CEL>",                                   // required
+  "expression":  "<CEL>",                                   // exactly one of
+  "value":       <non-null JSON, no markers>,               //  expression/value
   "description": "<text>"                                   // optional
 }
 

@@ -7,7 +7,8 @@ decisions that are still open. §13 records the decisions taken at
 implementation start and the corrections that came out of verifying
 the dependency APIs (`gg_tree` 2.3.1, `gg_json` 3.1.1, `cel` 0.5.4+1).
 Latest revisions: §13.6 (rule names drop the `§` prefix), §13.7
-(same-specificity ties are an error), §13.8 (optional `when` predicate).
+(same-specificity ties are an error), §13.8 (optional `when` predicate),
+§13.9 (literal `value` variants and push-style annotation books).
 
 ---
 
@@ -55,7 +56,7 @@ code review that refine it:
 |---|---|
 | **Reference** | A string value in tree data of the form `§ruleName`. Placeholder that resolution replaces with a concrete value. |
 | **Rule** | A named unit (`§ruleName`) consisting of one or more variants. |
-| **Variant** | One concrete definition of a rule: optional selector, optional inputs, one CEL expression. |
+| **Variant** | One concrete definition of a rule: optional selector, optional inputs, and one CEL expression or one literal value (§13.9). |
 | **Selector** | A set of `treeQuery = literal` conditions deciding whether a variant applies at a given node. All conditions must hold (AND). |
 | **Rule book** | A JSON document mapping rule keys to variant lists. Multiple books can be merged in a defined order. |
 | **Resolver** | Walks a tree, finds all references, selects the winning variant per reference in node context, evaluates it, writes the result. |
@@ -106,7 +107,8 @@ plain concatenation per key.
 
 | Field | Type | Required | Meaning |
 |---|---|---|---|
-| `expression` | string (CEL) | yes | Computes the rule result from the bound inputs. |
+| `expression` | string (CEL) | one of `expression` / `value` | Computes the rule result from the bound inputs. |
+| `value` | any non-null JSON | one of `expression` / `value` | A literal result, deep-copied on every use. Must not contain a marker (a map with a `§`-prefixed key). Both or neither of `expression`/`value` is a `SchemaException`. See §13.9. |
 | `selector` | object: treeQuery → literal | no | Equality conditions for this variant to apply. Absent/empty = base variant. |
 | `when` | string (CEL) | no | A predicate (must evaluate to bool) that must also hold for the variant to apply. Reads tree values through the same `inputs` as `expression`; enables ranges/comparisons/OR that equality selectors cannot. See §4.4 for specificity, §13.8. |
 | `inputs` | object: identifier → query | no | Binds CEL identifiers to tree queries, shared by `when` and `expression`. Identifier must be a valid CEL identifier; query uses `gg_tree` query syntax. |
@@ -310,8 +312,16 @@ class RuleVariant {
   final Selector selector;             // Selector.none for base
   final String? when;                  // optional CEL bool predicate
   final Map<String, RuleInput> inputs;
-  final String expression;
+  final String? expression;            // exactly one of expression /
+  final Object? value;                 //   value (non-null JSON), §13.9
   final String? description;
+}
+
+class Annotation {                     // §13.9
+  final String ruleKey;
+  final int variantIndex;              // in the merged variant list
+  final Object? value;                 // literal value or evaluated result
+  Json toJson();
 }
 
 class RuleInput {
@@ -337,6 +347,10 @@ class Resolver {
   Resolver({required RuleBook ruleBook});
   Tree<T> resolve<T extends Json>(Tree<T> tree, {bool inPlace = false});
   Object? resolveRule(Tree<Json> node, Rule rule); // single-shot helper
+
+  // Push-style application of the same book (§13.9); resolved trees only.
+  Map<String, List<Annotation>> annotate<T extends Json>(Tree<T> tree);
+  List<Annotation> annotateNode(Tree<Json> node);
 }
 ```
 
@@ -363,6 +377,7 @@ lib/
     rule_book.dart
     rule.dart
     rule_variant.dart
+    annotation.dart             // result of Resolver.annotate (§13.9)
     rule_input.dart
     selector.dart
     rule_ref.dart               // reference pattern, escaping, markers
@@ -551,6 +566,7 @@ depends on both.
 | D12 | Rule names are plain identifiers (no `§` prefix); `§` is only the structural reference/inline map key. | Team decision, 2026-07-21 |
 | D13 | Same-specificity ties among matching variants are an error (`AmbiguousVariantException`), never resolved by order — supersedes D2's later-wins tie-break. | Team decision, 2026-07-21 |
 | D14 | Optional `when` CEL predicate per variant (bool); effective specificity `2 * conditions + (when ? 1 : 0)`; shares the variant's inputs; resolves §11.7. | Team decision, 2026-07-21 |
+| D15 | A variant carries exactly one of `expression` or a literal `value` (marker-free JSON data); a rule book can also be applied push-style — `Resolver.annotate` / `annotateNode` annotate every node with each rule's winning variant, on resolved trees only. | Feature request (skill/term books), 2026-09-29 |
 
 ---
 
@@ -817,3 +833,80 @@ its `when` (if present) evaluates to `true`.
 - **Selection wiring.** `Rule.select` takes an injected `WhenEvaluator`
   (supplied by the resolver) so it needs no CEL dependency; a false
   `when` yields `MatchFailure.reason`, a blocked one `MatchBlocked`.
+
+### 13.9 Feature: value variants and annotation books (2026-09-29)
+
+Two additions that let the rule-book format carry static documentation
+and be applied *push-style*. Motivating use case: a **skill book** (per
+node: what it can do, which keys a rule may target, which queries are
+readable from it) and a **term book** (glossary: term → synonyms /
+meaning). Both reuse the rule-book format verbatim; nothing in the
+package knows what they mean.
+
+**Value variants.**
+
+- A variant has exactly one of `expression` (CEL, as before) or `value`
+  (any non-null JSON literal). Both or neither is a `SchemaException` at
+  load. `RuleVariant.expression` is therefore `String?` (a breaking
+  change for code reading it as non-null); `value` and `hasValue` are
+  new.
+- `value` is data, so it is validated as data: `null` is rejected
+  (gg_tree treats null as missing), non-JSON objects are rejected, and it
+  must contain **no marker**. A map with a `§`-prefixed key inside a
+  value would be read as a reference or inline expression by every
+  scanner and reader downstream, so examples of markers must be encoded
+  as strings.
+- The book keeps its own instance; every use (`resolve`, `resolveRule`,
+  `annotate`) hands out a deep copy, so callers can mutate what they get.
+  (`toJson` returns the stored instance, like `RuleInput` defaults.)
+- Selection is unchanged — selector, `when`, effective specificity,
+  ambiguity (§4.4, §13.7, §13.8). A winning value variant yields its
+  copy **without binding inputs**: `inputs` on a value variant only serve
+  its `when`. `resultType` validates value results like expression
+  results. Only expressions (and `when` sources) are compiled when the
+  `Resolver` is built.
+- Provenance: `ProvenanceEntry.value` is the literal; `expression`
+  stays null (nothing was evaluated).
+- Value variants work with `resolve` too — `{"§": "doc"}` resolves to the
+  literal — but the feature exists for annotation.
+
+**Annotation: push instead of pull.**
+
+`resolve` *pulls*: a marker asks for one rule at one location. An
+annotation book is *pushed*: `Resolver.annotate(tree)` visits every node
+top-down (the given node included) and evaluates **every** rule of
+`ruleBook` there, in book key order, through the same `Rule.select` /
+`when` / input-binding / evaluation path `resolve` uses — a rule means
+the same thing whichever way it is applied.
+
+- A rule's winning variant at a node *annotates* that node:
+  `Annotation(ruleKey, variantIndex, value)` — `variantIndex` in the
+  merged variant list (as in `ProvenanceEntry`), `value` the copied
+  literal or the evaluated expression.
+- No matching variant means the rule does not apply there: every rule is
+  implicitly optional (the `optional` flag is irrelevant), so a
+  base-less rule annotates only where its selectors match.
+- The result maps `node.path` to that node's annotations; nodes without
+  annotations are omitted and map order is visit order.
+  `annotateNode(node)` does the same for a single node (e.g. a term book
+  at the root).
+- Ambiguity throws `AmbiguousVariantException` exactly like `resolve`,
+  and one ambiguous node fails the whole call (no partial result).
+- **A resolved tree is required.** Selectors and inputs read the tree
+  through queries, and queries block on markers (§13.5). `resolve` copes
+  with a worklist that retries; `annotate` has neither a worklist nor a
+  location to write to, so it cannot defer. A blocked selector, `when`
+  or input therefore throws a `ResolveException` naming node, rule and
+  blocker and saying to resolve first. (`ResolveException`, not
+  `StuckException`: no round runs, nothing is stuck — the caller passed
+  an unresolved tree.) Resolve first, annotate the result.
+- `annotate` never mutates the tree, needs no root (any subtree works;
+  queries still see its ancestors because nothing is copied), and
+  touches neither the resolve worklist nor a recorder.
+- Expression results are returned as produced: a marker inside one is
+  not resolved (annotations are not written back into the tree).
+
+Known cost: `annotate` performs rules × nodes selector matches with only
+the per-`select()` read cache and no book indexing (§11.12 found
+indexing unnecessary for `resolve`, where only marked locations pay; the
+push shape is different and unmeasured). Profile before optimizing.

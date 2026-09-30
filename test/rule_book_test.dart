@@ -222,6 +222,72 @@ void main() {
       });
     });
 
+    group('value variants', () {
+      final valueJson = <String, dynamic>{
+        'doc': [
+          {
+            'value': {'text': 'Base docs.'},
+          },
+          {
+            'selector': {'#kind': 'door'},
+            'value': {'text': 'Door docs.'},
+          },
+        ],
+      };
+
+      test('should round-trip through toJson', () {
+        expect(RuleBook.fromJson(valueJson).toJson(), valueJson);
+      });
+
+      test('should merge value variants like expression variants', () {
+        final later = RuleBook.fromJson(<String, dynamic>{
+          'doc': [
+            {
+              'selector': {'#kind': 'drawer'},
+              'value': {'text': 'Drawer docs.'},
+            },
+          ],
+        });
+        final merged = RuleBook.merge([RuleBook.fromJson(valueJson), later]);
+
+        final variants = merged.ruleForKey('doc')!.variants;
+        expect(variants.map((v) => v.value), [
+          {'text': 'Base docs.'},
+          {'text': 'Door docs.'},
+          {'text': 'Drawer docs.'},
+        ]);
+      });
+
+      test('should lint value variants', () {
+        expect(RuleBook.fromJson(valueJson).lint(), isEmpty);
+
+        final duplicated = RuleBook.fromJson(<String, dynamic>{
+          'a': [
+            {'value': 'same'},
+          ],
+          'b': [
+            {'value': 'same'},
+          ],
+        });
+        expect(duplicated.lint().single, contains('identical'));
+      });
+
+      test('should report an invalid value variant with its rule', () {
+        var message = '';
+        try {
+          RuleBook.fromJson(<String, dynamic>{
+            'doc': [
+              {'expression': '1', 'value': 1},
+            ],
+          });
+        } on TreeExpressionsException catch (e) {
+          message = e.message;
+        }
+        expect(message, contains('Invalid rule book:'));
+        expect(message, contains('rule "doc", variant 0 has both'));
+      });
+    });
+
     group('suggestionsFor()', () {
       test('should suggest close keys, best match first', () {
         final book = RuleBook.fromJson(<String, dynamic>{
@@ -401,9 +467,15 @@ void main() {
         expect(RuleBook.fromJson(json).toJson(), json);
 
         final book = RuleBook.example();
-        expect(book.keys, ['borderWidth', 'gap', 'decoration']);
+        expect(book.keys, ['borderWidth', 'gap', 'decoration', 'borderHelp']);
         expect(book.ruleForKey('borderWidth')!.resultType, ResultType.number);
         expect(book.ruleForKey('decoration')!.isOptional, isTrue);
+        final help = book.ruleForKey('borderHelp')!.variants.single;
+        expect(help.hasValue, isTrue);
+        expect(help.value, {
+          'unit': 'px',
+          'text': 'Width of the dialog border.',
+        });
         expect(book.lint(), isEmpty);
       });
     });

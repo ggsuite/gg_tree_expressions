@@ -1,0 +1,51 @@
+{
+  "/": [
+    {
+      "ruleKey": "role",
+      "variantIndex": 0,
+      "value": "node"
+    }
+  ],
+  "/dialog": [
+    {
+      "ruleKey": "role",
+      "variantIndex": 1,
+      "value": "container"
+    },
+    {
+      "ruleKey": "keys",
+      "variantIndex": 0,
+      "value": {
+        "targets": [
+          "width",
+          "height"
+        ],
+        "text": "Size keys a rule may set."
+      }
+    },
+    {
+      "ruleKey": "wide",
+      "variantIndex": 0,
+      "value": true
+    }
+  ],
+  "/dialog/okButton": [
+    {
+      "ruleKey": "role",
+      "variantIndex": 0,
+      "value": "node"
+    }
+  ],
+  "/sidebar": [
+    {
+      "ruleKey": "role",
+      "variantIndex": 0,
+      "value": "node"
+    },
+    {
+      "ruleKey": "area",
+      "variantIndex": 0,
+      "value": 120000.0
+    }
+  ]
+}

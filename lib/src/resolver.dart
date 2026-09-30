@@ -7,6 +7,7 @@
 import 'package:gg_json/gg_json.dart';
 import 'package:gg_tree/gg_tree.dart';
 
+import 'annotation.dart';
 import 'compiled_expression.dart';
 import 'resolution_report.dart';
 import 'rule.dart';
@@ -25,6 +26,9 @@ import 'tree_reader.dart';
 /// inputs read still-unresolved values are deferred and retried. A
 /// resolved tree contains no markers, so [resolve] is idempotent and
 /// re-runnable (resolve → grow the tree → resolve again).
+///
+/// [annotate] and [annotateNode] push every rule to every node instead
+/// of waiting for a marker to pull it.
 class Resolver {
   /// Creates a resolver and compiles all rule book expressions.
   ///
@@ -44,13 +48,15 @@ class Resolver {
       final rule = ruleBook.ruleForKey(key)!;
       for (var i = 0; i < rule.variants.length; i++) {
         final expression = rule.variants[i].expression;
-        try {
-          CompiledExpression.compile(expression, cache: _cache);
-        } on TreeExpressionsException catch (e) {
-          throw ExpressionException([
-            'In rule "$key", variant $i:',
-            ...e.messages,
-          ], expression: expression);
+        if (expression != null) {
+          try {
+            CompiledExpression.compile(expression, cache: _cache);
+          } on TreeExpressionsException catch (e) {
+            throw ExpressionException([
+              'In rule "$key", variant $i:',
+              ...e.messages,
+            ], expression: expression);
+          }
         }
 
         final when = rule.variants[i].when;
@@ -192,12 +198,7 @@ class Resolver {
   /// be resolved right now (blocked on unresolved values).
   Object? resolveRule(Tree<Json> node, Rule rule) {
     final context = 'rule "${rule.key}" at node "${node.path}"';
-    final selection = rule.select(
-      node,
-      evaluateWhen: (variant, atNode, index) =>
-          _evaluateWhen(rule, index, variant, atNode),
-    );
-    switch (selection) {
+    switch (_select(rule, node)) {
       case SelectBlocked(:final query, :final blocker):
         throw ResolveException([
           'Cannot resolve $context:',
@@ -210,7 +211,7 @@ class Resolver {
         if (rule.isOptional) return null;
         throw _noVariantMatched(rule, node.path, reasons);
       case SelectMatch(:final variant, :final index):
-        final inputs = _bindInputs(variant, node, rule.key, index);
+        final inputs = _bindResultInputs(variant, node, rule.key, index);
         if (inputs is _Blocked) {
           throw ResolveException(['Cannot resolve $context:', inputs.reason]);
         }
@@ -220,6 +221,64 @@ class Resolver {
           rule,
           index,
           node.path,
+        );
+    }
+  }
+
+  // ...........................................................................
+  /// Annotates every node of [tree] with the rules of [ruleBook].
+  ///
+  /// The push counterpart of [resolve]: every rule is evaluated at
+  /// every node, and a winning variant annotates it with its `value` or
+  /// evaluated `expression`. A rule matching no variant does not apply
+  /// there (`optional` is irrelevant). Returns annotations by node path,
+  /// in rule book order; unannotated nodes are omitted.
+  ///
+  /// Expects a resolved tree: a query that still reads a marker throws
+  /// a [ResolveException]. Never mutates [tree]; works on any subtree
+  /// (queries still see its ancestors).
+  Map<String, List<Annotation>> annotate<T extends Json>(Tree<T> tree) {
+    final result = <String, List<Annotation>>{};
+    tree.visit((node) {
+      final annotations = annotateNode(node);
+      if (annotations.isNotEmpty) result[node.path] = annotations;
+    });
+    return result;
+  }
+
+  // ...........................................................................
+  /// Like [annotate], but for the single [node] only.
+  List<Annotation> annotateNode(Tree<Json> node) => [
+    for (final key in ruleBook.keys)
+      ?_annotateRule(ruleBook.ruleForKey(key)!, node),
+  ];
+
+  Annotation? _annotateRule(Rule rule, Tree<Json> node) {
+    final context = 'rule "${rule.key}" at node "${node.path}"';
+    switch (_select(rule, node)) {
+      case SelectBlocked(:final query, :final blocker):
+        throw _unresolvedTree(
+          context,
+          'the query "$query" waits for the unresolved value at '
+          '"$blocker"',
+        );
+      case SelectAmbiguous(:final specificity, :final matches):
+        throw _ambiguousVariant(rule, node.path, specificity, matches);
+      case SelectNone():
+        return null;
+      case SelectMatch(:final variant, :final index):
+        final inputs = _bindResultInputs(variant, node, rule.key, index);
+        if (inputs is _Blocked) throw _unresolvedTree(context, inputs.reason);
+        return Annotation(
+          ruleKey: rule.key,
+          variantIndex: index,
+          value: _evaluate(
+            variant,
+            inputs as Map<String, Object?>,
+            rule,
+            index,
+            node.path,
+          ),
         );
     }
   }
@@ -384,12 +443,7 @@ class Resolver {
       );
     }
 
-    final selection = rule.select(
-      item.node,
-      evaluateWhen: (variant, atNode, index) =>
-          _evaluateWhen(rule, index, variant, atNode),
-    );
-    switch (selection) {
+    switch (_select(rule, item.node)) {
       case SelectBlocked(:final query, :final blocker):
         item.blockReason =
             'selector condition "$query" waits for the '
@@ -405,7 +459,7 @@ class Resolver {
         }
         throw _noVariantMatched(rule, item.location, reasons);
       case SelectMatch(:final variant, :final index):
-        final inputs = _bindInputs(variant, item.node, key, index);
+        final inputs = _bindResultInputs(variant, item.node, key, index);
         if (inputs is _Blocked) {
           item.blockReason = inputs.reason;
           return false;
@@ -450,17 +504,16 @@ class Resolver {
     }
     final bound = inputs as Map<String, Object?>;
 
+    // Inline maps only ever build expression variants.
+    final source = variant.expression!;
     final CompiledExpression expression;
     try {
-      expression = CompiledExpression.compile(
-        variant.expression,
-        cache: _cache,
-      );
+      expression = CompiledExpression.compile(source, cache: _cache);
     } on TreeExpressionsException catch (e) {
       throw ExpressionException([
         'In $context:',
         ...e.messages,
-      ], expression: variant.expression);
+      ], expression: source);
     }
 
     final Object? result;
@@ -470,7 +523,7 @@ class Resolver {
       throw ExpressionException([
         'In $context:',
         ...e.messages,
-      ], expression: variant.expression);
+      ], expression: source);
     }
 
     _recordInline(recorder, item, variant, bound, result);
@@ -602,6 +655,16 @@ class Resolver {
     return bound;
   }
 
+  /// Inputs for the winning [variant]'s result; a value variant needs none.
+  Object _bindResultInputs(
+    RuleVariant variant,
+    Tree<Json> node,
+    String ruleKey,
+    int variantIndex,
+  ) => variant.hasValue
+      ? <String, Object?>{}
+      : _bindInputs(variant, node, ruleKey, variantIndex);
+
   Object? _evaluate(
     RuleVariant variant,
     Map<String, Object?> inputs,
@@ -610,17 +673,21 @@ class Resolver {
     String location,
   ) {
     final Object? result;
-    try {
-      result = CompiledExpression.compile(
-        variant.expression,
-        cache: _cache,
-      ).evaluate(inputs);
-    } on TreeExpressionsException catch (e) {
-      throw ExpressionException([
-        'While resolving rule "${rule.key}" (variant $variantIndex) '
-            'at "$location":',
-        ...e.messages,
-      ], expression: variant.expression);
+    if (variant.hasValue) {
+      result = _copied(variant.value);
+    } else {
+      try {
+        result = CompiledExpression.compile(
+          variant.expression!,
+          cache: _cache,
+        ).evaluate(inputs);
+      } on TreeExpressionsException catch (e) {
+        throw ExpressionException([
+          'While resolving rule "${rule.key}" (variant $variantIndex) '
+              'at "$location":',
+          ...e.messages,
+        ], expression: variant.expression!);
+      }
     }
 
     final resultType = rule.resultType;
@@ -633,6 +700,12 @@ class Resolver {
     }
     return result;
   }
+
+  SelectResult _select(Rule rule, Tree<Json> node) => rule.select(
+    node,
+    evaluateWhen: (variant, atNode, index) =>
+        _evaluateWhen(rule, index, variant, atNode),
+  );
 
   /// Evaluates [variant]'s `when` predicate at [node] for selection.
   ///
@@ -793,6 +866,15 @@ class Resolver {
     specificity: specificity,
     variantIndices: [for (final m in matches) m.index],
   );
+
+  // ResolveException, not StuckException: no round runs, the caller
+  // just passed an unresolved tree.
+  ResolveException _unresolvedTree(String context, String blocker) =>
+      ResolveException([
+        'Cannot annotate $context:',
+        '$blocker.',
+        'annotate() expects a resolved tree — call resolve() first.',
+      ]);
 
   StuckException _stuck(List<_WorkItem> deferred) {
     final pending = [
