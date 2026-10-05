@@ -147,7 +147,8 @@ class AmbiguousVariantException extends TreeExpressionsException {
 }
 
 // .............................................................................
-/// An input query resolved to nothing and declared no default.
+/// An input query (or context path) resolved to nothing and declared no
+/// default.
 class MissingInputException extends TreeExpressionsException {
   /// Creates the exception.
   MissingInputException(
@@ -159,7 +160,8 @@ class MissingInputException extends TreeExpressionsException {
   /// The name of the unresolvable input.
   final String inputName;
 
-  /// The query that resolved to nothing.
+  /// The query — or, for a context input, the context path — that
+  /// resolved to nothing.
   final String query;
 }
 

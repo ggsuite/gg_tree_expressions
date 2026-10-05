@@ -6,6 +6,7 @@
 
 library;
 
+export 'src/annotation.dart';
 export 'src/compiled_expression.dart';
 export 'src/did_you_mean.dart';
 export 'src/resolution_report.dart';

@@ -7,7 +7,8 @@
 // Property-style harness for the resolver's core claims: resolution
 // leaves no markers behind, is idempotent, keeps the original intact
 // in copy mode, and its outcome does not depend on the order in
-// which references appear in node data.
+// which references appear in node data — nor on resolving in stages
+// with a `where` filter.
 
 import 'dart:math';
 
@@ -147,6 +148,39 @@ void main() {
           isTrue,
           reason: clue,
         );
+      }
+    });
+
+    test('should reach the same result when resolved in stages', () {
+      for (var iteration = 0; iteration < 60; iteration++) {
+        final ruleCount = 2 + random.nextInt(4);
+        final resolver = Resolver(
+          ruleBook: RuleBook.fromJson(randomBook(ruleCount)),
+        );
+        final tree = randomTree(ruleCount, 0);
+        final full = resolver.resolve(tree);
+        final clue = 'iteration $iteration';
+
+        // A random but stable selection of markers by node and key.
+        final picks = <String, bool>{};
+        String id(Tree<Json> node, String key) => '${node.path}|$key';
+        final staged = resolver.resolve(
+          tree,
+          where: (node, key) => picks[id(node, key)] ??= random.nextBool(),
+        );
+
+        // Every selected marker is gone after the first stage ...
+        staged.visit((node) {
+          for (final MapEntry(:key, :value) in node.data.entries) {
+            if (picks[id(node, key)] ?? false) {
+              expect(containsMarker(value), isFalse, reason: clue);
+            }
+          }
+        });
+
+        // ... and a second stage over the rest completes the job.
+        final rest = resolver.resolve(staged);
+        expect(deeplEquals(rest.toJson(), full.toJson()), isTrue, reason: clue);
       }
     });
   });

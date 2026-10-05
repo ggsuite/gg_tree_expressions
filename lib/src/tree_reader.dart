@@ -54,6 +54,28 @@ void validateQuery(String query, {required String context}) {
   }
 }
 
+/// Validates that [path] is a usable data path into the caller context:
+/// non-empty and made of valid segments; throws with [context] if not.
+void validateContextPath(String path, {required String context}) {
+  final segments = parseJsonPath(path);
+  if (segments.isEmpty) {
+    throw SchemaException([
+      'Invalid context path "$path" in $context:',
+      'the path is empty.',
+    ]);
+  }
+  for (final segment in segments) {
+    try {
+      parseArrayIndex(segment);
+    } catch (e) {
+      throw SchemaException([
+        'Invalid context path "$path" in $context:',
+        messageOf(e),
+      ]);
+    }
+  }
+}
+
 /// Returns the message of [error] without the `'Exception: '` prefix.
 String messageOf(Object error) {
   final text = error.toString();
@@ -117,6 +139,25 @@ ReadResult readQuery(Tree<Json> node, String query) {
   // defers to the real read only for shape anomalies (rare), which
   // preserves getOrNull's exact error/edge semantics there.
   return _scanRead(node, parsed, pq.segments) ?? _realRead(node, query);
+}
+
+// .............................................................................
+/// Reads the data [path] (the part of a query after `#`) from the
+/// caller [context].
+///
+/// The context is plain data — it never holds markers — so the result is
+/// a [ReadValue] or [ReadMissing], never [ReadBlocked]. A missing
+/// context, an absent key, and a path through an incompatible shape all
+/// read as missing.
+ReadResult readContext(Json? context, String path) {
+  if (context == null) return const ReadMissing();
+  final Object? value;
+  try {
+    value = context.getOrNull<dynamic>(path);
+  } on Exception {
+    return const ReadMissing();
+  }
+  return value == null ? const ReadMissing() : ReadValue(value);
 }
 
 // .............................................................................

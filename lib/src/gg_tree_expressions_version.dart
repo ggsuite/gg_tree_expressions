@@ -9,4 +9,4 @@
 // coverage:ignore-file
 
 /// The version of the `gg_tree_expressions` package.
-const String ggTreeExpressionsVersion = '1.2.0';
+const String ggTreeExpressionsVersion = '2.0.0';

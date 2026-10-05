@@ -7,7 +7,8 @@ decisions that are still open. §13 records the decisions taken at
 implementation start and the corrections that came out of verifying
 the dependency APIs (`gg_tree` 2.3.1, `gg_json` 3.1.1, `cel` 0.5.4+1).
 Latest revisions: §13.6 (rule names drop the `§` prefix), §13.7
-(same-specificity ties are an error), §13.8 (optional `when` predicate).
+(same-specificity ties are an error), §13.8 (optional `when` predicate),
+§13.9 (literal `value` variants and push-style annotation books).
 
 ---
 
@@ -55,7 +56,7 @@ code review that refine it:
 |---|---|
 | **Reference** | A string value in tree data of the form `§ruleName`. Placeholder that resolution replaces with a concrete value. |
 | **Rule** | A named unit (`§ruleName`) consisting of one or more variants. |
-| **Variant** | One concrete definition of a rule: optional selector, optional inputs, one CEL expression. |
+| **Variant** | One concrete definition of a rule: optional selector, optional inputs, and one CEL expression or one literal value (§13.9). |
 | **Selector** | A set of `treeQuery = literal` conditions deciding whether a variant applies at a given node. All conditions must hold (AND). |
 | **Rule book** | A JSON document mapping rule keys to variant lists. Multiple books can be merged in a defined order. |
 | **Resolver** | Walks a tree, finds all references, selects the winning variant per reference in node context, evaluates it, writes the result. |
@@ -106,10 +107,11 @@ plain concatenation per key.
 
 | Field | Type | Required | Meaning |
 |---|---|---|---|
-| `expression` | string (CEL) | yes | Computes the rule result from the bound inputs. |
+| `expression` | string (CEL) | one of `expression` / `value` | Computes the rule result from the bound inputs. |
+| `value` | any non-null JSON | one of `expression` / `value` | A literal result, deep-copied on every use. Must not contain a marker (a map with a `§`-prefixed key). Both or neither of `expression`/`value` is a `SchemaException`. See §13.9. |
 | `selector` | object: treeQuery → literal | no | Equality conditions for this variant to apply. Absent/empty = base variant. |
 | `when` | string (CEL) | no | A predicate (must evaluate to bool) that must also hold for the variant to apply. Reads tree values through the same `inputs` as `expression`; enables ranges/comparisons/OR that equality selectors cannot. See §4.4 for specificity, §13.8. |
-| `inputs` | object: identifier → query | no | Binds CEL identifiers to tree queries, shared by `when` and `expression`. Identifier must be a valid CEL identifier; query uses `gg_tree` query syntax. |
+| `inputs` | object: identifier → query or `{context}` | no | Binds CEL identifiers to tree queries (or, long form, to a path into the resolver's caller context, §13.10), shared by `when` and `expression`. Identifier must be a valid CEL identifier; query uses `gg_tree` query syntax. |
 | `description` | string | no | Documentation only. |
 
 Input values (long form) may declare a default used when the query
@@ -124,6 +126,10 @@ resolves to nothing:
 
 Without a default, an unresolvable input query is an **error** (fail
 fast, with node path + query in the message).
+
+An input may instead read the resolver's read-only caller context with
+`{"context": "a/b", "default": …}` (exactly one of `query` / `context`,
+§13.10). Selectors stay tree-query-only.
 
 ### 4.3 Selector semantics
 
@@ -275,6 +281,9 @@ Semantics:
    `resolve()` on it is a no-op. Consumers implementing *growth* can
    therefore loop: resolve → interpret values → add subtrees (which may
    carry new references) → resolve again.
+6. **Staged resolution.** An optional `where` filter restricts step 3
+   to the selected markers; unselected ones a selected item waits for
+   are pulled in (§13.11).
 
 Why a worklist instead of the planned strict single root-down pass:
 top-down ordering already resolves the common parent→child dependency
@@ -310,12 +319,21 @@ class RuleVariant {
   final Selector selector;             // Selector.none for base
   final String? when;                  // optional CEL bool predicate
   final Map<String, RuleInput> inputs;
-  final String expression;
+  final String? expression;            // exactly one of expression /
+  final Object? value;                 //   value (non-null JSON), §13.9
   final String? description;
 }
 
+class Annotation {                     // §13.9
+  final String ruleKey;
+  final int variantIndex;              // in the merged variant list
+  final Object? value;                 // literal value or evaluated result
+  Json toJson();
+}
+
 class RuleInput {
-  final String query;
+  final String? query;                 // exactly one of query /
+  final String? context;               //   context path, §13.10
   final Object? defaultValue;
   final bool hasDefault;
 }
@@ -333,10 +351,19 @@ class CompiledExpression {
 }
 
 // Resolution
+typedef MarkerFilter = bool Function(Tree<Json> node, String key); // §13.11
+
 class Resolver {
-  Resolver({required RuleBook ruleBook});
-  Tree<T> resolve<T extends Json>(Tree<T> tree, {bool inPlace = false});
+  Resolver({required RuleBook ruleBook, Json? context});  // §13.10
+  Tree<T> resolve<T extends Json>(Tree<T> tree,
+      {bool inPlace = false, MarkerFilter? where});       // §13.11
+  Tree<T> resolveAtomic<T extends Json>(Tree<T> tree,
+      {MarkerFilter? where});
   Object? resolveRule(Tree<Json> node, Rule rule); // single-shot helper
+
+  // Push-style application of the same book (§13.9); resolved trees only.
+  Map<String, List<Annotation>> annotate<T extends Json>(Tree<T> tree);
+  List<Annotation> annotateNode(Tree<Json> node);
 }
 ```
 
@@ -363,6 +390,7 @@ lib/
     rule_book.dart
     rule.dart
     rule_variant.dart
+    annotation.dart             // result of Resolver.annotate (§13.9)
     rule_input.dart
     selector.dart
     rule_ref.dart               // reference pattern, escaping, markers
@@ -551,6 +579,9 @@ depends on both.
 | D12 | Rule names are plain identifiers (no `§` prefix); `§` is only the structural reference/inline map key. | Team decision, 2026-07-21 |
 | D13 | Same-specificity ties among matching variants are an error (`AmbiguousVariantException`), never resolved by order — supersedes D2's later-wins tie-break. | Team decision, 2026-07-21 |
 | D14 | Optional `when` CEL predicate per variant (bool); effective specificity `2 * conditions + (when ? 1 : 0)`; shares the variant's inputs; resolves §11.7. | Team decision, 2026-07-21 |
+| D15 | A variant carries exactly one of `expression` or a literal `value` (marker-free JSON data); a rule book can also be applied push-style — `Resolver.annotate` / `annotateNode` annotate every node with each rule's winning variant, on resolved trees only. | Feature request (skill/term books), 2026-09-29 |
+| D16 | Rules can read read-only caller data that is not in the tree: `Resolver(context: …)` plus the `{"context": "a/b"}` input form. Out-of-band like the rule book, never modified, bound as copies; selectors stay tree-only (§13.10). | Feature request (CAD pipeline), 2026-10-02 |
+| D17 | `resolve` / `resolveVerbose` / `resolveAtomic` accept a `where` marker filter for staged resolution; selected markers pull in the unselected markers they wait for. `resolveAtomic` writes back only nodes whose data changed (§13.11). | Feature request (CAD pipeline), 2026-10-02 |
 
 ---
 
@@ -817,3 +848,222 @@ its `when` (if present) evaluates to `true`.
 - **Selection wiring.** `Rule.select` takes an injected `WhenEvaluator`
   (supplied by the resolver) so it needs no CEL dependency; a false
   `when` yields `MatchFailure.reason`, a blocked one `MatchBlocked`.
+
+### 13.9 Feature: value variants and annotation books (2026-09-29)
+
+Two additions that let the rule-book format carry static documentation
+and be applied *push-style*. Motivating use case: a **skill book** (per
+node: what it can do, which keys a rule may target, which queries are
+readable from it) and a **term book** (glossary: term → synonyms /
+meaning). Both reuse the rule-book format verbatim; nothing in the
+package knows what they mean.
+
+**Value variants.**
+
+- A variant has exactly one of `expression` (CEL, as before) or `value`
+  (any non-null JSON literal). Both or neither is a `SchemaException` at
+  load. `RuleVariant.expression` is therefore `String?` (a breaking
+  change for code reading it as non-null); `value` and `hasValue` are
+  new.
+- `value` is data, so it is validated as data: `null` is rejected
+  (gg_tree treats null as missing), non-JSON objects are rejected, and it
+  must contain **no marker**. A map with a `§`-prefixed key inside a
+  value would be read as a reference or inline expression by every
+  scanner and reader downstream, so examples of markers must be encoded
+  as strings.
+- The book keeps its own instance; every use (`resolve`, `resolveRule`,
+  `annotate`) hands out a deep copy, so callers can mutate what they get.
+  (`toJson` returns the stored instance, like `RuleInput` defaults.)
+- Selection is unchanged — selector, `when`, effective specificity,
+  ambiguity (§4.4, §13.7, §13.8). A winning value variant yields its
+  copy **without binding inputs**: `inputs` on a value variant only serve
+  its `when`. `resultType` validates value results like expression
+  results. Only expressions (and `when` sources) are compiled when the
+  `Resolver` is built.
+- Provenance: `ProvenanceEntry.value` is the literal; `expression`
+  stays null (nothing was evaluated).
+- Value variants work with `resolve` too — `{"§": "doc"}` resolves to the
+  literal — but the feature exists for annotation.
+
+**Annotation: push instead of pull.**
+
+`resolve` *pulls*: a marker asks for one rule at one location. An
+annotation book is *pushed*: `Resolver.annotate(tree)` visits every node
+top-down (the given node included) and evaluates **every** rule of
+`ruleBook` there, in book key order, through the same `Rule.select` /
+`when` / input-binding / evaluation path `resolve` uses — a rule means
+the same thing whichever way it is applied.
+
+- A rule's winning variant at a node *annotates* that node:
+  `Annotation(ruleKey, variantIndex, value)` — `variantIndex` in the
+  merged variant list (as in `ProvenanceEntry`), `value` the copied
+  literal or the evaluated expression.
+- No matching variant means the rule does not apply there: every rule is
+  implicitly optional (the `optional` flag is irrelevant), so a
+  base-less rule annotates only where its selectors match.
+- The result maps `node.path` to that node's annotations; nodes without
+  annotations are omitted and map order is visit order.
+  `annotateNode(node)` does the same for a single node (e.g. a term book
+  at the root).
+- Ambiguity throws `AmbiguousVariantException` exactly like `resolve`,
+  and one ambiguous node fails the whole call (no partial result).
+- **A resolved tree is required.** Selectors and inputs read the tree
+  through queries, and queries block on markers (§13.5). `resolve` copes
+  with a worklist that retries; `annotate` has neither a worklist nor a
+  location to write to, so it cannot defer. A blocked selector, `when`
+  or input therefore throws a `ResolveException` naming node, rule and
+  blocker and saying to resolve first. (`ResolveException`, not
+  `StuckException`: no round runs, nothing is stuck — the caller passed
+  an unresolved tree.) Resolve first, annotate the result.
+- `annotate` never mutates the tree, needs no root (any subtree works;
+  queries still see its ancestors because nothing is copied), and
+  touches neither the resolve worklist nor a recorder.
+- Expression results are returned as produced: a marker inside one is
+  not resolved (annotations are not written back into the tree).
+
+Known cost: `annotate` performs rules × nodes selector matches with only
+the per-`select()` read cache and no book indexing (§11.12 found
+indexing unnecessary for `resolve`, where only marked locations pay; the
+push shape is different and unmeasured). Profile before optimizing.
+
+### 13.10 Feature: read-only caller context (2026-10-02)
+
+Rules sometimes need data that is **not in the tree** — a CAD pipeline's
+cabinet config such as `{"dimensions": {"basicShape": {"dimensions":
+{"h": 2000}}}}`. It is supplied once, out-of-band, exactly like the
+rule book:
+
+```dart
+Resolver(ruleBook: book, context: {'dimensions': {/* … */}});
+```
+
+```jsonc
+"inputs": {
+  "h": { "context": "dimensions/basicShape/dimensions/h", "default": 1800 }
+}
+```
+
+- **Decision.** `RuleInput` gains a second source. A long-form input has
+  exactly one of `query` (tree query, as before) or `context` (a data
+  path into the resolver's context); the short form stays a tree query.
+  `RuleInput.query` is therefore `String?` (a breaking change for code
+  reading it as non-null) and `context` / `isContext` are new — the same
+  xor shape as `RuleVariant.expression` / `value` (§13.9).
+- **Path syntax** is the data part of a query — what follows `#`:
+  `a/b`, `a.b`, `xs[0]`, `rows[0]/cells[1]`. Reading reuses gg_json's
+  path reader (`readContext` in `tree_reader.dart`), validation reuses
+  its segment parser, so both stay consistent with tree data paths.
+  An empty or malformed path is a `SchemaException` naming the input.
+- **Binding.** Context inputs go through the one `_bindInputs`, so they
+  work identically in variants, `when` predicates, inline `§inputs`,
+  `resolveRule`, and `annotate` / `annotateNode`. They are **never
+  blocked**: the context holds no markers (the constructor rejects one
+  with a `SchemaException`), so a context read never defers an item.
+- **Missing** (no context at all, absent key, null value, or a path
+  through an incompatible shape) yields the declared `default`, else a
+  `MissingInputException` whose message says it was a *context path*
+  (and, when the resolver has no context, that none was given). Unlike a
+  tree query, a shape mismatch is *not* a `QueryException`: the context
+  is free-shaped caller data, "not there" is the useful reading, and a
+  default is the author's tool for it.
+- **Read-only.** The resolver never modifies the context, and every
+  value bound from it is a deep copy (`_copied`), so no expression
+  result can alias the caller's maps and lists.
+- **Provenance.** A `ProvenanceEntry` records bound input *values*
+  (name → value), never queries, so a context input shows up as its
+  value like any other input; no report change was needed.
+- **Selectors stay tree-query-only.** A selector condition is
+  `treeQuery == literal`; context-dependent selection is a `when`
+  predicate over a context input (§13.8), which also gives ranges and
+  OR. Keeping selectors tree-only avoids a second condition-key syntax
+  and keeps specificity a plain condition count.
+
+Rejected alternatives:
+
+- **Put the data into the tree root.** It would shadow real root keys,
+  has to be stripped again before the tree is exported or hashed, and
+  needs read-only guards so rules and consumers cannot write it. The
+  tree stays exactly what the consumer built.
+- **A reserved query prefix** (e.g. `context:dimensions/h` inside
+  ordinary queries). New syntax in every read path — selector keys,
+  input queries, the marker scanner and its conformance mirror (§13.3) —
+  for something only inputs need.
+- **Rules reading rules** (the context as a second rule book). The
+  values come from the caller at resolve time, not from a book, so a
+  book would only hold constants; it cannot express per-request data.
+
+### 13.11 Feature: partial resolution and adopt-only-changed (2026-10-02)
+
+**`where:` — staged resolution.** A consumer that resolves its tree in
+stages wants only some markers resolved at a given point. `resolve`,
+`resolveVerbose`, and `resolveAtomic` take an optional
+`MarkerFilter where` — `bool Function(Tree<Json> node, String key)` —
+where `key` is the **top-level data key** holding the marker (a marker at
+`node#cfg/sizes[0]` has key `cfg`). `where: null` is exactly the old
+behavior.
+
+- **Collect once, partition.** All markers are collected as before and
+  the filter is asked once per marker. Selected markers form the
+  worklist; the rest are *dormant* and never looked at — a dormant
+  marker that would fail (unknown rule, typo, missing input) is not an
+  error, and its map instance stays untouched in the tree.
+- **Dependency pull-in.** A selected item blocked on a read is deferred
+  as before; if the blocker (an input, a selector condition, or a `when`
+  input reading an unresolved value) is a dormant marker, that marker is
+  moved into the worklist and resolved too, transitively. A staged
+  resolve therefore never fails merely because a selected rule depends
+  on an unselected one, and an unselected marker nothing waits for is
+  never resolved.
+- **Blocker locations.** Blockers use the same `'<nodePath>#<dataPath>'`
+  format as work-item locations (`'/dialog#cfg/sizes[0]'`), because both
+  are built by the same walk (`_scanData` / `_scanValue`). The blocker is
+  *the shallowest marker on the read path*, or — when the read lands on a
+  value that merely **contains** markers (an input reads `#cfg`, markers
+  sit at `#cfg/a`) — the path of that value. A dormant item matches when
+  its location **is** the blocker or lies **below** it (continues with
+  `/` or `[`; the empty data path `'/n#'`, from reading a node's whole
+  data with `../#`, covers everything on the node). An item *above* a
+  blocker cannot exist: markers are atomic and never scanned into, and a
+  read stops at the first marker on its path. Matching is a string prefix
+  with a separator check, so `/#cfg` does not match `/#cfgX` and `/a#w`
+  does not match `/ab#w`.
+- **Discovered markers** (an alias result containing a new reference)
+  belong to the selected location and stay selected; `where` is not
+  asked about them.
+- **Termination is unchanged.** A round that makes no progress *and*
+  pulls nothing in throws `StuckException`; pulling a marker in counts as
+  progress for that round. Errors of selected and pulled-in markers are
+  exactly those of a full resolve.
+- **Why the top-level key.** It is the unit a staged pipeline can name
+  (`front`, `shelves`, `cfg`) without knowing the rule layout inside it,
+  and it makes selection coherent: every marker below one key of one node
+  shares one verdict, so a selected write never lands inside a dormant
+  marker, and a blocker can only mix verdicts at the node-wide `'/n#'`
+  location.
+- Staged resolution is order-independent in the same sense as a single
+  call: resolving with any `where` and then without one equals one full
+  resolve (a property test checks it over random trees and books).
+
+**`resolveAtomic` adopts only changed nodes.** It resolves a copy and
+writes the result back on success. The write-back used to replace the
+data of *every* node (`clear` + `addAll`), swapping every nested map and
+list of every node for the copy's instances even where nothing changed.
+A downstream consumer documented that such a copy/adopt cycle rewrites
+data maps in canonical key order. Verified against gg_json 4.3 and
+gg_tree 2.8: `deepCopy` is `Map.of` plus nested copies, which keeps
+insertion order, and the old write-back refilled in that same order, so
+**key order was never changed** for plain JSON maps. The real churn was
+the object identity of all nested containers plus O(total data) work. The
+change is wanted for both reasons, and matters more with staged
+resolution, which changes few nodes per stage.
+
+- `_adoptData` compares each node's data with gg_json's `deeplEquals`
+  and writes back only nodes that differ. Untouched nodes keep their data
+  map, nested values, and key order by identity.
+- Granularity is the node: a changed node is replaced wholesale (its
+  unchanged nested values become the copy's). Adopting per top-level key
+  would keep even those, at the price of a bespoke deep comparison of
+  dynamic values; not needed so far.
+- Equality treats `1` and `1.0` as equal, which cannot hide a change:
+  every resolution replaces a marker *map* (or removes a key), which is
+  never equal to its replacement.

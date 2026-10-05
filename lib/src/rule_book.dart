@@ -63,7 +63,7 @@ class RuleBook {
   /// An example rule book covering the shorthand and object forms.
   ///
   /// A typed multi-variant rule ([Rule.example]), a shorthand base
-  /// rule, and an optional rule without a base variant.
+  /// rule, an optional rule without a base variant, and a `value` rule.
   factory RuleBook.example() => RuleBook.fromJson(<String, dynamic>{
     'borderWidth': Rule.example().toJson(),
     'gap': [
@@ -78,6 +78,11 @@ class RuleBook {
         },
       ],
     },
+    'borderHelp': [
+      {
+        'value': {'unit': 'px', 'text': 'Width of the dialog border.'},
+      },
+    ],
   });
 
   final Map<String, Rule> _rules;

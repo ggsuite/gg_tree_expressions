@@ -42,5 +42,13 @@
         "expression": "\"gold\""
       }
     ]
-  }
+  },
+  "borderHelp": [
+    {
+      "value": {
+        "unit": "px",
+        "text": "Width of the dialog border."
+      }
+    }
+  ]
 }

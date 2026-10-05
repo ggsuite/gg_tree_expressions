@@ -9,17 +9,24 @@ import 'package:gg_json/gg_json.dart';
 import 'tree_expressions_exception.dart';
 import 'tree_reader.dart';
 
-/// A named binding from a CEL identifier to a tree query, evaluated
-/// relative to the node holding the reference.
+/// A named binding from a CEL identifier to a value, evaluated relative
+/// to the node holding the reference: either a tree [query] or a path
+/// into the resolver's caller [context].
 class RuleInput {
-  /// Creates an input reading [query], optionally with a default.
-  RuleInput({required this.query, this.defaultValue, this.hasDefault = false});
+  /// Creates an input reading exactly one of [query] and [context],
+  /// optionally with a default.
+  RuleInput({
+    this.query,
+    this.context,
+    this.defaultValue,
+    this.hasDefault = false,
+  }) : assert((query == null) != (context == null), 'query xor context');
 
   /// Parses an input from rule book JSON.
   ///
   /// Accepts the short form (a query string) and the long form
-  /// (`{"query": …, "default": …}`). [context] describes the owner
-  /// for errors.
+  /// (`{"query": …, "default": …}` or `{"context": …, "default": …}`).
+  /// [context] describes the owner for errors.
   factory RuleInput.fromJson(Object? json, {required String context}) {
     if (json is String) {
       validateQuery(json, context: context);
@@ -27,7 +34,7 @@ class RuleInput {
     }
 
     if (json is Map) {
-      const allowed = {'query', 'default'};
+      const allowed = {'query', 'context', 'default'};
       final unknown = json.keys.where((k) => !allowed.contains(k));
       if (unknown.isNotEmpty) {
         throw SchemaException([
@@ -39,14 +46,42 @@ class RuleInput {
         ]);
       }
 
-      final query = json['query'];
-      if (query is! String) {
+      final hasContext = json.containsKey('context');
+      if (hasContext && json.containsKey('query')) {
         throw SchemaException([
-          'Missing or invalid "query" in $context.',
-          'Expected a tree query string, got: $query',
+          '$context has both "query" and "context".',
+          'An input reads exactly one: a tree "query" or a "context" '
+              'path.',
         ]);
       }
-      validateQuery(query, context: context);
+
+      final String? query;
+      final String? contextPath;
+      if (hasContext) {
+        final path = json['context'];
+        if (path is! String) {
+          throw SchemaException([
+            'Invalid "context" in $context.',
+            'Expected a context path string, got: $path',
+          ]);
+        }
+        validateContextPath(path, context: context);
+        query = null;
+        contextPath = path;
+      } else {
+        final value = json['query'];
+        if (value is! String) {
+          throw SchemaException([
+            'Missing or invalid "query" in $context.',
+            'Expected a tree query string, got: $value',
+            'An input needs exactly one of "query" (a tree query) or '
+                '"context" (a caller context path).',
+          ]);
+        }
+        validateQuery(value, context: context);
+        query = value;
+        contextPath = null;
+      }
 
       final hasDefault = json.containsKey('default');
       final defaultValue = json['default'];
@@ -58,6 +93,7 @@ class RuleInput {
       }
       return RuleInput(
         query: query,
+        context: contextPath,
         defaultValue: defaultValue,
         hasDefault: hasDefault,
       );
@@ -65,7 +101,8 @@ class RuleInput {
 
     throw SchemaException([
       'Invalid input definition in $context: $json',
-      'Expected a query string or {"query": …, "default": …}.',
+      'Expected a query string, {"query": …, "default": …} or '
+          '{"context": …, "default": …}.',
     ]);
   }
 
@@ -74,17 +111,30 @@ class RuleInput {
   factory RuleInput.example() =>
       RuleInput(query: 'screen#width', defaultValue: 4.0, hasDefault: true);
 
-  /// The tree query bound to the CEL identifier.
-  final String query;
+  /// The tree query bound to the CEL identifier; null for a [context]
+  /// input.
+  final String? query;
 
-  /// The value used when the query resolves to nothing.
+  /// The data path (`a/b`, `a.b`, `xs[0]`, …) into the resolver's caller
+  /// context bound to the CEL identifier; null for a [query] input.
+  final String? context;
+
+  /// The value used when the query or context path resolves to nothing.
   final Object? defaultValue;
 
   /// True when a default was declared. Without one, an unresolvable
-  /// query is an error.
+  /// query or context path is an error.
   final bool hasDefault;
 
+  /// True when this input reads the caller [context], not the tree.
+  bool get isContext => context != null;
+
   /// Serializes back to JSON (short form when possible).
-  Object? toJson() =>
-      hasDefault ? {'query': query, 'default': defaultValue} : query;
+  Object? toJson() {
+    if (!isContext && !hasDefault) return query;
+    return {
+      if (isContext) 'context': context else 'query': query,
+      if (hasDefault) 'default': defaultValue,
+    };
+  }
 }
