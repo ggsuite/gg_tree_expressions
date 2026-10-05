@@ -64,7 +64,7 @@ void main() {
 | Rule | A named list of variants under a rule key like `"borderWidth"`. |
 | Variant | Optional `selector`, optional `when` predicate, optional `inputs`, and either one CEL `expression` or one literal `value`. |
 | Selector | Conditions `treeQuery == literal`, all of which must hold. |
-| Inputs | Explicit bindings from CEL identifiers to tree queries, evaluated from the node holding the reference. |
+| Inputs | Explicit bindings from CEL identifiers to tree queries (evaluated from the node holding the reference) or to paths into the resolver's read-only caller context. |
 
 ### Precedence
 
@@ -111,6 +111,38 @@ same result" use one `when` with `||`.
 
 Without a default, an unresolvable input query is an error naming the
 input, query, rule, and node.
+
+### Caller context
+
+Rules can also read **read-only data that is not in the tree**. Hand it
+to the resolver once, like the rule book, and bind it with a `context`
+input (exactly one of `query` / `context` per long-form input):
+
+```dart
+final resolver = Resolver(
+  ruleBook: ruleBook,
+  context: {
+    'dimensions': {
+      'basicShape': {
+        'dimensions': {'h': 2000},
+      },
+    },
+  },
+);
+```
+
+```jsonc
+"inputs": {
+  "h": { "context": "dimensions/basicShape/dimensions/h", "default": 1800 }
+}
+```
+
+The path is the data part of a query (`a/b`, `a.b`, `xs[0]`). A missing
+context or path yields the default, else a `MissingInputException`
+saying it was a context path. A context input is never blocked, the
+context is never modified, and bound maps and lists are copies. Selectors
+read the tree only — use a `when` predicate over a context input to pick
+a variant by context data.
 
 ### Inline expressions
 
@@ -194,7 +226,15 @@ subtree. `value` variants also work with `resolve`.
   resolution runs on a copy and is written back only on success, so on
   error the tree is left untouched (unlike `inPlace: true`, which may
   leave partial state). Meant for pipeline steps that must mutate the
-  tree they are handed yet stay all-or-nothing.
+  tree they are handed yet stay all-or-nothing. Only nodes whose data
+  changed are written back; all others keep their data maps as they were.
+- `resolve`, `resolveVerbose`, and `resolveAtomic` accept
+  `where: (node, key) => bool` to resolve in stages. `key` is the
+  top-level data key holding the marker (`cfg` for a marker at
+  `node#cfg/sizes[0]`). Only selected markers are resolved, plus any
+  unselected marker a selected one waits for (transitively); the rest
+  stay untouched and never raise errors. Resolving with `where` and then
+  without equals one full resolve.
 - One call resolves everything, order-independently: items whose
   selectors or inputs read still-unresolved values are deferred and
   retried; queries never silently search past an unresolved value.

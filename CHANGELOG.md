@@ -10,11 +10,27 @@
 class apply a rule book push-style: every rule's winning variant
 annotates every node. Requires a resolved tree.
 - Add value variants and annotation books
+- `Resolver(context: …)` and the `{"context": "a/b"}` input form let
+rules read read-only caller data that is not in the tree. Context
+inputs are never blocked, bound as copies, and never modify the
+context; selectors stay tree-only (use `when`). `RuleInput` gains
+`context` and `isContext`; new `validateContextPath` and `readContext`
+in `tree_reader.dart`.
+- `where` (`MarkerFilter`) on `resolve`, `resolveVerbose`, and
+`resolveAtomic` for staged resolution: only selected markers are
+resolved, plus the unselected markers they wait for.
+- Add resolver context and partial resolution
 
 ### Changed
 
 - **Breaking:** `RuleVariant.expression` is now `String?` (null for
 `value` variants); `RuleVariant` gains `value` and `hasValue`.
+- **Breaking:** `RuleInput.query` is now `String?` (null for `context`
+inputs); `RuleInput`'s constructor takes exactly one of `query` /
+`context`. `MissingInputException.query` holds the context path for a
+context input.
+- `resolveAtomic` writes back only the nodes whose data changed, so
+untouched nodes keep their data maps and nested values.
 
 ## 1.2.0 - 2026-08-14
 

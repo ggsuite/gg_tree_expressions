@@ -16,6 +16,24 @@ void main() {
         expect(input.query, '#width');
         expect(input.defaultValue, isNull);
         expect(input.hasDefault, isFalse);
+        expect(input.context, isNull);
+        expect(input.isContext, isFalse);
+      });
+
+      test('should build a context input without a query', () {
+        final input = RuleInput(context: 'dimensions/h');
+        expect(input.context, 'dimensions/h');
+        expect(input.isContext, isTrue);
+        expect(input.query, isNull);
+        expect(input.hasDefault, isFalse);
+      });
+
+      test('should require exactly one of query and context', () {
+        expect(() => RuleInput(), throwsA(isA<AssertionError>()));
+        expect(
+          () => RuleInput(query: '#a', context: 'a'),
+          throwsA(isA<AssertionError>()),
+        );
       });
     });
 
@@ -96,6 +114,7 @@ void main() {
           );
           expect(message, contains('Allowed keys:'));
           expect(message, contains('  - query'));
+          expect(message, contains('  - context'));
           expect(message, contains('  - default'));
         });
 
@@ -116,6 +135,8 @@ void main() {
             ),
           );
           expect(message, contains('Expected a tree query string, got: null'));
+          expect(message, contains('exactly one of "query"'));
+          expect(message, contains('"context"'));
         });
 
         test('should throw on a non-string query', () {
@@ -166,6 +187,107 @@ void main() {
         });
       });
 
+      group('context form', () {
+        String messageOfFromJson(Object? json) {
+          try {
+            RuleInput.fromJson(json, context: 'input "h" of rule "a"');
+          } on SchemaException catch (e) {
+            return e.message;
+          }
+          return '';
+        }
+
+        test('should parse a context path', () {
+          final input = RuleInput.fromJson({
+            'context': 'dimensions/basicShape/dimensions/h',
+          }, context: 'input "h" of rule "a"');
+          expect(input.context, 'dimensions/basicShape/dimensions/h');
+          expect(input.isContext, isTrue);
+          expect(input.query, isNull);
+          expect(input.hasDefault, isFalse);
+        });
+
+        test('should parse the dotted and indexed path syntax', () {
+          for (final path in ['a.b', 'xs[0]', 'a/xs[1][2]/b', '/a']) {
+            final input = RuleInput.fromJson({
+              'context': path,
+            }, context: 'input "h" of rule "a"');
+            expect(input.context, path);
+          }
+        });
+
+        test('should parse a context path with a default', () {
+          final input = RuleInput.fromJson({
+            'context': 'a/b',
+            'default': 5,
+          }, context: 'input "h" of rule "a"');
+          expect(input.context, 'a/b');
+          expect(input.defaultValue, 5);
+          expect(input.hasDefault, isTrue);
+        });
+
+        test('should treat an explicit null default as declared', () {
+          final input = RuleInput.fromJson({
+            'context': 'a/b',
+            'default': null,
+          }, context: 'input "h" of rule "a"');
+          expect(input.hasDefault, isTrue);
+          expect(input.defaultValue, isNull);
+        });
+
+        test('should reject query and context together', () {
+          final message = messageOfFromJson({'query': '#a', 'context': 'a'});
+          expect(
+            message,
+            contains('input "h" of rule "a" has both "query" and "context".'),
+          );
+        });
+
+        test('should reject a non-string context', () {
+          for (final bad in [42, null]) {
+            final message = messageOfFromJson({'context': bad});
+            expect(message, contains('Invalid "context" in input "h"'));
+            expect(
+              message,
+              contains('Expected a context path string, got: $bad'),
+            );
+          }
+        });
+
+        test('should reject an empty context path naming the input', () {
+          for (final path in ['', '/', '..']) {
+            final message = messageOfFromJson({'context': path});
+            expect(
+              message,
+              contains(
+                'Invalid context path "$path" in input "h" of rule "a":',
+              ),
+            );
+            expect(message, contains('the path is empty'));
+          }
+        });
+
+        test('should reject an invalid context path naming the input', () {
+          final message = messageOfFromJson({'context': 'a[x]'});
+          expect(
+            message,
+            contains('Invalid context path "a[x]" in input "h" of rule "a":'),
+          );
+          expect(message, contains('Invalid path segment "a[x]"'));
+        });
+
+        test('should reject a non-JSON default', () {
+          final message = messageOfFromJson({
+            'context': 'a',
+            'default': DateTime(2026),
+          });
+          expect(
+            message,
+            contains('The default of input "h" of rule "a" is not a JSON'),
+          );
+        });
+      });
+
       test('should throw on completely invalid json', () {
         var message = '';
         try {
@@ -179,7 +301,10 @@ void main() {
         );
         expect(
           message,
-          contains('Expected a query string or {"query": …, "default": …}.'),
+          contains(
+            'Expected a query string, {"query": …, "default": …} or '
+            '{"context": …, "default": …}.',
+          ),
         );
       });
     });
@@ -228,6 +353,40 @@ void main() {
         );
         expect(reparsed.hasDefault, isTrue);
         expect(reparsed.defaultValue, isNull);
+      });
+
+      test('should serialize a context input to the long form', () {
+        final input = RuleInput.fromJson({
+          'context': 'a/b',
+        }, context: 'input "w"');
+        expect(input.toJson(), {'context': 'a/b'});
+
+        final reparsed = RuleInput.fromJson(
+          input.toJson(),
+          context: 'input "w"',
+        );
+        expect(reparsed.context, 'a/b');
+        expect(reparsed.query, isNull);
+        expect(reparsed.hasDefault, isFalse);
+      });
+
+      test('should keep the default of a context input', () {
+        final input = RuleInput.fromJson({
+          'context': 'a/b',
+          'default': [1, 2],
+        }, context: 'input "w"');
+        expect(input.toJson(), {
+          'context': 'a/b',
+          'default': [1, 2],
+        });
+
+        final reparsed = RuleInput.fromJson(
+          input.toJson(),
+          context: 'input "w"',
+        );
+        expect(reparsed.context, 'a/b');
+        expect(reparsed.defaultValue, [1, 2]);
+        expect(reparsed.hasDefault, isTrue);
       });
     });
 

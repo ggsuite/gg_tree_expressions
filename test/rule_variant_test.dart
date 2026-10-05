@@ -83,6 +83,38 @@ void main() {
         expect(input.defaultValue, 42);
       });
 
+      test('should parse and round-trip context inputs', () {
+        final json = {
+          'expression': 'h + 1',
+          'inputs': {
+            'h': {'context': 'dimensions/h', 'default': 42},
+            'w': {'context': 'dimensions/w'},
+          },
+        };
+        final variant = RuleVariant.fromJson(json, context: 'test variant');
+
+        expect(variant.inputs['h']!.context, 'dimensions/h');
+        expect(variant.inputs['h']!.query, isNull);
+        expect(variant.inputs['h']!.defaultValue, 42);
+        expect(variant.inputs['w']!.isContext, isTrue);
+        expect(variant.toJson(), json);
+      });
+
+      test('should name the input of an invalid context path', () {
+        var message = '';
+        try {
+          RuleVariant.fromJson({
+            'expression': 'h',
+            'inputs': {
+              'h': {'context': ''},
+            },
+          }, context: 'rule "r", variant 0');
+        } on SchemaException catch (e) {
+          message = e.message;
+        }
+        expect(message, contains('in input "h" of rule "r", variant 0'));
+      });
+
       test('should parse a variant with a description', () {
         final variant = RuleVariant.fromJson({
           'expression': '5',

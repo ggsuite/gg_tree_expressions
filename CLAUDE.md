@@ -6,10 +6,11 @@ rules whose CEL expressions evaluate in node context; one
 (ggsuite), no domain-specific dependencies.
 
 **Read `doc/architecture.md` first** — §12 has the decision log
-(D1–D15), §13 the implementation decisions, corrections, and the
+(D1–D17), §13 the implementation decisions, corrections, and the
 post-review revisions (§13.4 review fixes, §13.5/§13.6 format
 revisions, §13.7 ambiguous-tie error, §13.8 `when` predicate, §13.9
-`value` variants + annotation books).
+`value` variants + annotation books, §13.10 caller context, §13.11
+partial resolution `where:` + adopt-only-changed).
 Do not trust older material (an older internal blog post,
 pre-§13.5 docs): it shows `"§name"` **string** references, which no
 longer exist. Pre-§13.6 material keys rules with a leading `§`
@@ -49,6 +50,30 @@ identifiers.
   irrelevant). Needs a **resolved** tree — a blocked read throws
   `ResolveException` (annotate has no worklist to defer). Never mutates;
   reuses `_select`/`_bindResultInputs`/`_evaluate`, no second engine.
+- Caller context (§13.10): `Resolver(context: Json?)` is read-only data
+  outside the tree, out-of-band like the rule book. A long-form input has
+  exactly **one** of `query` / `context` (`RuleInput.query` is `String?`);
+  the `context` value is a data path (`a/b`, `a.b`, `xs[0]`) read with
+  gg_json (`readContext`). Never blocked (the ctor rejects a marker in
+  it), bound as `_copied` values, missing → default or
+  `MissingInputException`. **Selectors stay tree-only** — a `when` over a
+  context input covers context-dependent selection. Reports record bound
+  values only, so nothing changed there.
+- Partial resolution (§13.11): `where: MarkerFilter` `(node, topLevelKey)`
+  on `resolve`/`resolveVerbose`/`resolveAtomic`. Unselected markers are
+  *dormant* and untouched; a deferred item's blocker location
+  (`'<nodePath>#<dataPath>'`, same format as `_WorkItem.location`) pulls
+  every dormant item at or below it into the worklist (transitively).
+  Discovered markers stay selected; stuck = no progress **and** nothing
+  pulled. `where: null` = old behavior. Keep `_isAtOrBelow` in step with
+  the blocker format of `tree_reader.dart` (`_scanData`).
+- `resolveAtomic` adopts only nodes whose data changed (`deeplEquals`),
+  per node, not per key. A plain `Tree<Json>.deepCopy` keeps key order;
+  the churn was nested-container identity. A consumer tree type may still
+  reorder on copy — `ds_slot`'s `SlotTree` rebuilds `slot` and `tags`
+  through its constructor, so they come first in the copy — which is why
+  adopting every node used to move `tags` to the front of untouched nodes
+  and adopt-only-changed no longer does.
 - All errors are subtypes of the sealed `TreeExpressionsException`
   (typed fields; tests should assert types, not only message text).
 
@@ -140,11 +165,13 @@ identifiers.
   / `ProvenanceKind`). Capture is threaded via a null-gated `_Recorder`,
   so `resolve()` pays nothing.
 - Consumer adapter: **shipped** — a consumer's pipeline step wraps
-  `resolveAtomic` (optional book; skips marker-free trees so their
-  data-map key order stays byte-stable) and `resolveVerbose` behind an
-  `onReport` callback. Downstream wiring lives in the consumer packages
-  (their layout chain, config rule-book / rule-writes, and request
-  wire + validate-rules dry-run).
+  `resolveAtomic` (optional book; skips trees with no selected marker, so
+  there is nothing to copy) and `resolveVerbose` behind an `onReport`
+  callback, and passes `context` and `where` for staged resolution
+  (`ds_slot`'s `RuleScheduler` runs one resolver this way, ALAP by data
+  key). Downstream wiring lives in the consumer packages (their fitter
+  chain, config rule-book / rule-writes / context, and request wire +
+  validate-rules dry-run).
 - Performance: profiled and optimized on branch `Performance`
   (2026-07-09). Four evidence-gated wins landed — per-select read
   cache, bounded parsed-query cache in `tree_reader`, single-walk

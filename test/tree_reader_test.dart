@@ -36,6 +36,41 @@ void main() {
     });
   });
 
+  group('validateContextPath()', () {
+    String messageOfCall(String path) {
+      try {
+        validateContextPath(path, context: 'input "h"');
+      } on SchemaException catch (e) {
+        return e.message;
+      }
+      return '';
+    }
+
+    test('should accept the data-path syntax of queries', () {
+      validateContextPath('a', context: 'test');
+      validateContextPath('a/b', context: 'test');
+      validateContextPath('a.b', context: 'test');
+      validateContextPath('xs[0]/b[1][2]', context: 'test');
+    });
+
+    test('should throw on an empty path', () {
+      for (final path in ['', '/', '.']) {
+        final message = messageOfCall(path);
+        expect(message, contains('Invalid context path "$path"'));
+        expect(message, contains('input "h"'));
+        expect(message, contains('the path is empty'));
+      }
+    });
+
+    test('should throw on an invalid segment', () {
+      for (final path in ['a[x]', 'a]', 'a/[0]']) {
+        final message = messageOfCall(path);
+        expect(message, contains('Invalid context path "$path"'));
+        expect(message, contains('Invalid path segment'));
+      }
+    });
+  });
+
   group('messageOf()', () {
     test('should strip the Exception prefix', () {
       expect(messageOf(Exception('boom')), 'boom');
@@ -43,6 +78,60 @@ void main() {
 
     test('should keep other error texts unchanged', () {
       expect(messageOf(StateError('bad')), 'Bad state: bad');
+    });
+  });
+
+  group('readContext()', () {
+    final context = <String, dynamic>{
+      'dimensions': {
+        'basicShape': {
+          'dimensions': {'h': 2000},
+        },
+      },
+      'xs': [
+        {'n': 1},
+        [10, 20],
+      ],
+      'flag': false,
+      'nothing': null,
+    };
+
+    test('should read nested values with / and . separators', () {
+      final slash = readContext(context, 'dimensions/basicShape/dimensions/h');
+      final dot = readContext(context, 'dimensions.basicShape.dimensions.h');
+      expect((slash as ReadValue).value, 2000);
+      expect((dot as ReadValue).value, 2000);
+    });
+
+    test('should read maps, lists, and falsy values', () {
+      expect(
+        (readContext(context, 'dimensions/basicShape') as ReadValue).value,
+        {
+          'dimensions': {'h': 2000},
+        },
+      );
+      expect((readContext(context, 'xs[1]') as ReadValue).value, [10, 20]);
+      expect((readContext(context, 'xs[1][0]') as ReadValue).value, 10);
+      expect((readContext(context, 'xs[0]/n') as ReadValue).value, 1);
+      expect((readContext(context, 'flag') as ReadValue).value, false);
+    });
+
+    test('should report no context as missing', () {
+      expect(readContext(null, 'a'), isA<ReadMissing>());
+    });
+
+    test('should report absent keys, nulls, and bad indices as missing', () {
+      expect(readContext(context, 'nope'), isA<ReadMissing>());
+      expect(readContext(context, 'nope/deeper'), isA<ReadMissing>());
+      expect(readContext(context, 'nothing'), isA<ReadMissing>());
+      expect(readContext(context, 'xs[9]'), isA<ReadMissing>());
+    });
+
+    test('should report incompatible shapes as missing', () {
+      // Through a scalar, into a non-list, and an invalid segment.
+      expect(readContext(context, 'flag/deeper'), isA<ReadMissing>());
+      expect(readContext(context, 'flag[0]'), isA<ReadMissing>());
+      expect(readContext(context, 'xs[a]'), isA<ReadMissing>());
     });
   });
 

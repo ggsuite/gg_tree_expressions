@@ -38,7 +38,8 @@ Key consequences that shape everything below:
 
 - A rule's expression is **CEL** and can read tree values **only**
   through explicitly declared `inputs`. There is no implicit "self" or
-  free tree access inside an expression.
+  free tree access inside an expression. An input may also read the
+  caller's read-only **context** — data that is not in the tree (§5.5).
 - Which node a query reads from is decided by **gg_tree query
   semantics** (inheritance / own-node / child / info), evaluated from
   the node holding the marker.
@@ -193,7 +194,7 @@ Giving both `expression` and `value`, or neither, is also a
 | `value` | any non-null JSON | **one of** `expression` / `value` | A literal result, written as a fresh deep copy on every use. `null` is rejected (gg_tree treats null as missing). Must **not** contain a marker — a map with a `§`-prefixed key would be read as a reference or inline expression, so write marker *examples* as strings. Mostly used for static documentation in annotation books (§20). |
 | `selector` | object | no | Equality conditions for this variant to apply. Absent/empty ⇒ **base variant** (specificity 0, matches everywhere). |
 | `when` | string (CEL) | no | A bool predicate that must **also** hold for the variant to apply (§4.6). For ranges/comparisons/OR that equality cannot express. |
-| `inputs` | object | no | Binds CEL identifiers to tree queries, shared by `when` and `expression`. Absent ⇒ no inputs. On a `value` variant they only serve its `when`. |
+| `inputs` | object | no | Binds CEL identifiers to tree queries or, long form, to caller-context paths (§5.5), shared by `when` and `expression`. Absent ⇒ no inputs. On a `value` variant they only serve its `when`. |
 | `description` | string | no | Documentation only; ignored at runtime. |
 
 A variant with **no** selector and **no** inputs — `{"expression":
@@ -219,6 +220,10 @@ another variant.
 
 Each **key** is a tree query (§6), evaluated from the node holding the
 reference. The condition holds when `node.read(query) == literal`.
+
+Selectors read the **tree only** — they cannot read the caller context
+(§5.5). To choose a variant by context data, bind it as a context input
+and test it in a `when` predicate (§4.6).
 
 ### 4.2 Condition values — literals
 
@@ -317,12 +322,14 @@ equality can't express.
 
 An expression can **only** reference identifiers declared in `inputs`
 (plus literals). `inputs` binds each CEL identifier to a tree query,
-evaluated from the node holding the reference.
+evaluated from the node holding the reference — or to a path into the
+caller's read-only context (§5.5).
 
 ```jsonc
 "inputs": {
   "screenWidth": "screen#width",                     // short form
-  "margin":      { "query": "#margin", "default": 4.0 }  // long form
+  "margin":      { "query": "#margin", "default": 4.0 },  // long form
+  "height":      { "context": "dimensions/h" }             // caller context
 }
 ```
 
@@ -350,8 +357,9 @@ A **string** is the query (§6), validated for syntax at load:
 
 ### 5.3 Input values — long form
 
-An **object** with keys **exactly** `query` (required string) and
-`default` (optional, any JSON value — scalar, list, or map):
+An **object** with exactly **one** of `query` (a tree query string) or
+`context` (a caller-context path, §5.5), plus an optional `default` (any
+JSON value — scalar, list, or map):
 
 ```jsonc
 "inputs": {
@@ -361,17 +369,58 @@ An **object** with keys **exactly** `query` (required string) and
 }
 ```
 
-Any key other than `query`/`default` → `SchemaException`.
+Allowed keys are **exactly** `query`, `context`, `default`. Any other
+key → `SchemaException`; so is giving both `query` and `context`, or
+neither.
 
 ### 5.4 Missing inputs
 
-- **With** a `default`: when the query resolves to nothing, the default
-  (deep-copied) is bound.
-- **Without** a `default`: when the query resolves to nothing, resolution
-  fails with `MissingInputException` (names the input, query, rule,
-  node).
-- **Blocked**: when the query touches an unresolved marker, the item is
-  deferred and retried (never a hard error by itself).
+- **With** a `default`: when the query (or context path) resolves to
+  nothing, the default (deep-copied) is bound.
+- **Without** a `default`: when it resolves to nothing, resolution
+  fails with `MissingInputException` (names the input, query or context
+  path, rule, node).
+- **Blocked**: when a *tree* query touches an unresolved marker, the
+  item is deferred and retried (never a hard error by itself). A context
+  input is never blocked.
+
+### 5.5 Context inputs — caller data that is not in the tree
+
+The code that resolves the tree may hand the `Resolver` a read-only
+**context** — plain JSON data kept outside the tree, like the rule book
+(`Resolver(ruleBook: book, context: config)`). A `context` input reads a
+path into it:
+
+```jsonc
+"inputs": {
+  "h": { "context": "dimensions/basicShape/dimensions/h", "default": 1800 }
+}
+```
+
+- The path is the **data part of a query** (§6.2): `a/b`, `a.b`,
+  `xs[0]`, `rows[0]/cells[1]` — no node path and no `#`, because the
+  context is not a tree and is the same wherever the marker sits. It
+  must be non-empty and well formed (`SchemaException` naming the
+  input).
+- Works everywhere an input does: variants, `when` predicates, inline
+  `§inputs`.
+- **Missing** — the resolver has no context, the path is absent, its
+  value is `null`, or it runs through an incompatible shape (e.g. into a
+  scalar) — gives the `default`, else a `MissingInputException` that says
+  it was a context path. (Unlike a tree query, a shape mismatch is not a
+  `QueryException`.)
+- **Never blocked, never changed**: the context holds no markers and the
+  resolver never modifies it; a bound map or list is a copy.
+- **Selectors cannot read the context.** Use a `when` over a context
+  input to pick a variant by context data:
+
+  ```jsonc
+  "shelfCount": [
+    { "expression": "4" },
+    { "when": "h < 2000", "inputs": { "h": { "context": "dimensions/h" } },
+      "expression": "3" }
+  ]
+  ```
 
 ---
 
@@ -701,7 +750,19 @@ priority** and concatenates variant lists per rule key.
   resolved.
 - `resolveAtomic(tree)` mutates in place but **all-or-nothing**:
   resolves a copy, writes back only on success. Meant for pipeline steps
-  that must stay clean on failure.
+  that must stay clean on failure. Only nodes whose data changed are
+  written back; the others keep their data maps untouched.
+- **Staged resolution**: `resolve`, `resolveVerbose`, and `resolveAtomic`
+  take an optional `where: (node, key) => bool`; `key` is the
+  **top-level data key** holding the marker (for a marker at
+  `node#cfg/sizes[0]`, `cfg`). Only selected markers are resolved, plus
+  any unselected marker a selected one waits for (an input, selector, or
+  `when` reading it) — transitively. All other markers stay exactly as
+  they were, and an unselected marker is never an error. Resolving with
+  `where` and then without equals one full resolve. Markers produced by
+  a selected one (aliasing) stay selected.
+- **Context**: `Resolver(context: …)` supplies the read-only data that
+  `context` inputs read (§5.5).
 - **Order-independent**: markers whose selectors/inputs read
   still-unresolved values are deferred and retried; a query never
   silently searches past an unresolved marker.
@@ -752,7 +813,11 @@ them. Failures are typed subclasses of `TreeExpressionsException`.
 **Inputs**
 - [ ] Identifiers match `^[a-zA-Z_][a-zA-Z0-9_]*$` and are not CEL
       reserved words.
-- [ ] Value is a query string or `{ "query": <string>, "default": <json> }`.
+- [ ] Value is a query string, `{ "query": <string>, "default": <json> }`,
+      or `{ "context": <path>, "default": <json> }` — exactly one of
+      `query` / `context`, and `default` optional.
+- [ ] A `context` path is non-empty and well formed (`a/b`, `a.b`,
+      `xs[0]`), and the code resolving the tree supplies that context.
 - [ ] Every identifier used in `expression` or `when` is declared here.
 
 **Expressions**
@@ -937,6 +1002,8 @@ OR: `{ "when": "h < 2000.0 || w > 1000.0", "inputs": { … }, "expression":
 - Use `when` for ranges/comparisons equality can't state; keep plain
   equality selectors when they suffice.
 - Use the ternary for min/max/clamp.
+- Read data that is not in the tree with a `context` input, and give it
+  a `default` unless the caller always supplies it.
 
 **Don't**
 - Don't write references as strings (`"name"`) — use `{"§": "name"}`.
@@ -949,6 +1016,9 @@ OR: `{ "when": "h < 2000.0 || w > 1000.0", "inputs": { … }, "expression":
 - Don't put `§`-prefixed keys on ordinary data maps.
 - Don't rely on absolute-from-root node paths; paths are relative with
   upward search.
+- Don't put caller context in a selector (selectors read the tree only);
+  bind it as a `context` input and use `when`.
+- Don't give an input both `query` and `context`.
 
 ---
 
@@ -1265,7 +1335,9 @@ Semantics authors rely on:
   "selector":    { "<query>": <string|number|bool>, ... },  // optional
   "when":        "<CEL bool predicate>",                    // optional
   "inputs":      { "<ident>": "<query>"                     // optional
-                            | { "query": "<query>", "default": <json> }, ... },
+                            | { "query": "<query>", "default": <json> }
+                            | { "context": "<a/b>", "default": <json> }, ... },
+                            // exactly one of query / context; default optional
   "expression":  "<CEL>",                                   // exactly one of
   "value":       <non-null JSON, no markers>,               //  expression/value
   "description": "<text>"                                   // optional
@@ -1295,6 +1367,10 @@ dataPath (which value in node data):
   xs[0]               data["xs"][0]
   a[0][1] / a[0]/b    nested indexing / mixed
   node/<prop>         computed node info (read-only, e.g. node/index)
+
+context path (`{ "context": "<path>" }` input, §5.5): only a dataPath —
+no node path, no '#' — read from the resolver's caller context.
+Selectors cannot use it; use `when`.
 ```
 
 ## Appendix C — CEL quick reference

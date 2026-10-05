@@ -314,6 +314,62 @@ void main() {
         expect(identical(result, tree), isTrue);
         expect(tree.getOrNull<double>('./#v'), 3.0);
       });
+
+      test('should write back only the nodes whose data changed', () {
+        final child = node('child', {
+          'q': 1,
+          'nested': {
+            'list': [1, 2],
+          },
+          'a': 3,
+        });
+        final root = node('root', {'z': 1, 'm': ref('w'), 'c': 2}, [child]);
+
+        final childData = child.data;
+        final nested = child.data['nested'] as Map<String, dynamic>;
+        final list = nested['list'];
+
+        resolver(book).resolveAtomic(root);
+
+        // The untouched node keeps its map and everything nested in it,
+        // in the original key order.
+        expect(identical(child.data, childData), isTrue);
+        expect(identical(child.data['nested'], nested), isTrue);
+        expect(identical(nested['list'], list), isTrue);
+        expect(child.data.keys, ['q', 'nested', 'a']);
+
+        // The changed node got its resolved value, at the same position.
+        expect(root.data.keys, ['z', 'm', 'c']);
+        expect(root.data['m'], 3.0);
+      });
+
+      test('should adopt deep changes and leave other branches alone', () {
+        final grandchild = node('grandchild', {'v': ref('w'), 'a': 1});
+        final sibling = node('sibling', {
+          'b': {
+            'n': [1],
+          },
+          'a': 1,
+        });
+        final root = node(
+          'root',
+          {'x': 0},
+          [
+            node('child', {'k': 1}, [grandchild]),
+            sibling,
+          ],
+        );
+        final siblingData = sibling.data;
+        final siblingNested = sibling.data['b'];
+
+        resolver(book).resolveAtomic(root);
+
+        expect(grandchild.data.keys, ['v', 'a']);
+        expect(grandchild.data['v'], 3.0);
+        expect(identical(sibling.data, siblingData), isTrue);
+        expect(identical(sibling.data['b'], siblingNested), isTrue);
+        expect(sibling.data.keys, ['b', 'a']);
+      });
     });
 
     group('resolve()', () {
@@ -1219,6 +1275,897 @@ void main() {
         expect(e.aliasChain, ['doc']);
         expect(e.toJson().containsKey('expression'), isFalse);
         expect(e.toString(), isNot(contains('expr')));
+      });
+    });
+
+    group('resolve() — context inputs', () {
+      final context = <String, dynamic>{
+        'dimensions': {
+          'basicShape': {
+            'dimensions': {'h': 2000, 'w': 800},
+          },
+        },
+        'sizes': [100, 200],
+      };
+
+      Resolver withContext(Json bookJson, [Json? ctx]) =>
+          Resolver(ruleBook: RuleBook.fromJson(bookJson), context: ctx);
+
+      Json heightBook() => {
+        'doubled': [
+          {
+            'inputs': {
+              'h': {'context': 'dimensions/basicShape/dimensions/h'},
+            },
+            'expression': 'h * 2',
+          },
+        ],
+      };
+
+      test('should bind a context value into an expression', () {
+        final resolved = withContext(
+          heightBook(),
+          context,
+        ).resolve(node('root', {'v': ref('doubled')}));
+        expect(resolved.getOrNull<int>('./#v'), 4000);
+      });
+
+      test('should read dotted paths and list items', () {
+        final resolved = withContext({
+          'sum': [
+            {
+              'inputs': {
+                'w': {'context': 'dimensions.basicShape.dimensions.w'},
+                's': {'context': 'sizes[1]'},
+              },
+              'expression': 'w + s',
+            },
+          ],
+        }, context).resolve(node('root', {'v': ref('sum')}));
+        expect(resolved.getOrNull<int>('./#v'), 1000);
+      });
+
+      test('should feed a context value to a when predicate', () {
+        Json book() => {
+          'shelf': [
+            {'expression': '560.0'},
+            {
+              'when': 'h < 2200',
+              'inputs': {
+                'h': {'context': 'dimensions/basicShape/dimensions/h'},
+              },
+              'expression': '320.0',
+            },
+          ],
+        };
+        final tree = node('root', {'v': ref('shelf')});
+        expect(
+          withContext(book(), context).resolve(tree).getOrNull<double>('./#v'),
+          320.0,
+        );
+
+        final tall = <String, dynamic>{
+          'dimensions': {
+            'basicShape': {
+              'dimensions': {'h': 2500},
+            },
+          },
+        };
+        expect(
+          withContext(book(), tall).resolve(tree).getOrNull<double>('./#v'),
+          560.0,
+        );
+      });
+
+      test('should bind context inputs of inline expressions', () {
+        final tree = node('root', {
+          'x': {
+            '§expression': 'h + 1',
+            '§inputs': {
+              'h': {'context': 'dimensions/basicShape/dimensions/h'},
+            },
+          },
+        });
+        final resolved = withContext({}, context).resolve(tree);
+        expect(resolved.getOrNull<int>('./#x'), 2001);
+      });
+
+      test('should reject an invalid context input of an inline map', () {
+        final tree = node('root', {
+          'x': {
+            '§expression': 'h',
+            '§inputs': {
+              'h': {'context': ''},
+            },
+          },
+        });
+        final e = catchException(() => withContext({}, context).resolve(tree));
+        expect(e, isA<SchemaException>());
+        expect(e!.message, contains('the path is empty'));
+      });
+
+      test('should apply the default when the path is missing', () {
+        final book = {
+          'v': [
+            {
+              'inputs': {
+                'd': {'context': 'dimensions/nope', 'default': 7},
+              },
+              'expression': 'd',
+            },
+          ],
+        };
+        final tree = node('root', {'v': ref('v')});
+        expect(
+          withContext(book, context).resolve(tree).getOrNull<int>('./#v'),
+          7,
+        );
+        // Also without any context, and through an incompatible shape.
+        expect(withContext(book).resolve(tree).getOrNull<int>('./#v'), 7);
+        final through = {
+          'v': [
+            {
+              'inputs': {
+                'd': {
+                  'context': 'dimensions/basicShape/dimensions/h/deeper',
+                  'default': 8,
+                },
+              },
+              'expression': 'd',
+            },
+          ],
+        };
+        expect(
+          withContext(through, context).resolve(tree).getOrNull<int>('./#v'),
+          8,
+        );
+      });
+
+      test('should copy a default so results never alias the book', () {
+        final resolver = withContext({
+          'v': [
+            {
+              'inputs': {
+                'd': {
+                  'context': 'nope',
+                  'default': {'a': 1},
+                },
+              },
+              'expression': 'd',
+            },
+          ],
+        });
+        final first = resolver.resolve(node('root', {'v': ref('v')}));
+        (first.data['v'] as Map<String, dynamic>)['a'] = 99;
+        final second = resolver.resolve(node('root', {'v': ref('v')}));
+        expect(second.data['v'], {'a': 1});
+      });
+
+      test('should fail on a missing context path without default', () {
+        final e = catchException(
+          () => withContext(heightBook(), {
+            'other': 1,
+          }).resolve(node('root', {'v': ref('doubled')})),
+        );
+        expect(e, isA<MissingInputException>());
+        expect(e!.message, contains('Missing input "h" of rule "doubled"'));
+        expect(
+          e.message,
+          contains(
+            'the context path "dimensions/basicShape/dimensions/h" '
+            'resolved to nothing',
+          ),
+        );
+        expect(e.message, isNot(contains('without a context')));
+        final missing = e as MissingInputException;
+        expect(missing.inputName, 'h');
+        expect(missing.query, 'dimensions/basicShape/dimensions/h');
+      });
+
+      test('should say so when the resolver has no context at all', () {
+        final e = catchException(
+          () =>
+              withContext(heightBook())
+                  .resolve(node('root', {'v': ref('doubled')})),
+        );
+        expect(e, isA<MissingInputException>());
+        expect(e!.message, contains('the context path'));
+        expect(e.message, contains('created without a context'));
+      });
+
+      test('should keep the context separate from the tree data', () {
+        // The tree key `h` is an unresolved marker; the context key `h`
+        // is a different namespace and is read without deferral.
+        final resolved = withContext(
+          {
+            'fromContext': [
+              {
+                'inputs': {
+                  'h': {'context': 'h'},
+                },
+                'expression': 'h',
+              },
+            ],
+            'one': [
+              {'expression': '1'},
+            ],
+          },
+          {'h': 7},
+        ).resolve(node('root', {'h': ref('one'), 'v': ref('fromContext')}));
+        expect(resolved.data['v'], 7);
+        expect(resolved.data['h'], 1);
+      });
+
+      test('should bind copies, never the caller data itself', () {
+        final ctx = <String, dynamic>{
+          'cfg': {
+            'a': 1,
+            'xs': [1, 2],
+          },
+          'list': [
+            {'n': 1},
+          ],
+        };
+        final snapshot = deepCopy(ctx);
+        final resolved = withContext({
+          'cfg': [
+            {
+              'inputs': {
+                'c': {'context': 'cfg'},
+              },
+              'expression': 'c',
+            },
+          ],
+          'list': [
+            {
+              'inputs': {
+                'l': {'context': 'list'},
+              },
+              'expression': 'l',
+            },
+          ],
+        }, ctx).resolve(node('root', {'a': ref('cfg'), 'b': ref('list')}));
+
+        expect(resolved.data['a'], ctx['cfg']);
+        expect(identical(resolved.data['a'], ctx['cfg']), isFalse);
+        expect(resolved.data['b'], ctx['list']);
+        expect(identical(resolved.data['b'], ctx['list']), isFalse);
+
+        // Mutating the result leaves the caller data alone.
+        (resolved.data['a'] as Map<String, dynamic>)['a'] = 99;
+        ((resolved.data['a'] as Map<String, dynamic>)['xs'] as List).add(3);
+        (resolved.data['b'] as List).clear();
+        expect(deeplEquals(ctx, snapshot), isTrue);
+      });
+
+      test('should never modify the context', () {
+        final ctx = deepCopy(context);
+        final resolver = withContext(heightBook(), ctx);
+        resolver.resolve(node('root', {'v': ref('doubled')}), inPlace: true);
+        resolver.resolveVerbose(node('root', {'v': ref('doubled')}));
+        resolver.resolveAtomic(node('root', {'v': ref('doubled')}));
+        expect(deeplEquals(ctx, context), isTrue);
+      });
+
+      test('should record context inputs as bound values (rich)', () {
+        final (_, report) = withContext(
+          heightBook(),
+          context,
+        ).resolveVerbose(node('root', {'v': ref('doubled')}), rich: true);
+        final e = report.entries.single;
+        expect(e.inputs, {'h': 2000});
+        expect(e.value, 4000);
+        expect(e.expression, 'h * 2');
+      });
+
+      test('should work with resolveRule', () {
+        final resolver = withContext(heightBook(), context);
+        final rule = resolver.ruleBook.ruleForKey('doubled')!;
+        expect(resolver.resolveRule(node('root', {}), rule), 4000);
+      });
+
+      test('should work with annotate and annotateNode', () {
+        final resolver = withContext({
+          'height': [
+            {
+              'inputs': {
+                'h': {'context': 'dimensions/basicShape/dimensions/h'},
+              },
+              'expression': 'h',
+            },
+          ],
+        }, context);
+        final tree = node('root', {}, [node('child', {})]);
+
+        final annotated = resolver.annotate(tree);
+        expect(annotated.keys, ['/', '/child']);
+        expect(annotated['/child']!.single.value, 2000);
+
+        final single = resolver.annotateNode(tree);
+        expect(single.single.ruleKey, 'height');
+        expect(single.single.value, 2000);
+      });
+
+      test('should reject a context containing a marker', () {
+        for (final bad in <Json>[
+          {'a': ref('r')},
+          {
+            'a': [
+              {'§expression': '1'},
+            ],
+          },
+        ]) {
+          final e = catchException(() => withContext({}, bad));
+          expect(e, isA<SchemaException>());
+          expect(e!.message, contains('context contains a marker'));
+        }
+      });
+    });
+
+    group('resolve() — where (partial resolution)', () {
+      Json whereBook() => {
+        'one': [
+          {'expression': '1'},
+        ],
+        'viaB': [
+          {
+            'inputs': {'x': './#b'},
+            'expression': 'x + 1',
+          },
+        ],
+        'viaC': [
+          {
+            'inputs': {'x': './#c'},
+            'expression': 'x + 10',
+          },
+        ],
+        'viaA': [
+          {
+            'inputs': {'x': './#a'},
+            'expression': 'x + 1',
+          },
+        ],
+        'boom': [
+          {
+            'inputs': {'m': './#missing'},
+            'expression': 'm',
+          },
+        ],
+      };
+
+      Resolver whereResolver() => resolver(whereBook());
+
+      MarkerFilter only(Set<String> keys) =>
+          (node, key) => keys.contains(key);
+
+      test('should resolve only the selected markers', () {
+        final tree = node('root', {'a': ref('one'), 'b': ref('one')});
+        final resolved = whereResolver().resolve(tree, where: only({'a'}));
+        expect(resolved.data, {
+          'a': 1,
+          'b': {'§': 'one'},
+        });
+        // Copy mode: the original is untouched as usual.
+        expect(tree.data['a'], {'§': 'one'});
+      });
+
+      test('should hand the node and the top-level key to the filter', () {
+        final tree = node(
+          'root',
+          {
+            'cfg': {
+              'sizes': [
+                ref('one'),
+                {'deep': ref('one')},
+              ],
+            },
+            'plain': 1,
+          },
+          [
+            node('child', {
+              'x': {'§expression': '1'},
+            }),
+          ],
+        );
+        final calls = <String>[];
+        whereResolver().resolve(
+          tree,
+          where: (node, key) {
+            calls.add('${node.path}|$key');
+            return true;
+          },
+        );
+        // One call per marker, with the top-level key — not the path.
+        expect(calls, ['/|cfg', '/|cfg', '/child|x']);
+      });
+
+      test('should leave unselected markers untouched, same instances', () {
+        final dormant = ref('one');
+        final tree = node('root', {'a': ref('one'), 'b': dormant});
+        whereResolver().resolve(tree, inPlace: true, where: only({'a'}));
+        expect(tree.data['a'], 1);
+        expect(identical(tree.data['b'], dormant), isTrue);
+      });
+
+      test('should resolve nothing when nothing is selected', () {
+        // Even markers that would fail: they are never looked at.
+        final tree = node('root', {
+          'a': ref('one'),
+          'bad': ref('noSuchRule'),
+          'typo': {'§typo': 1},
+        });
+        final resolved = whereResolver().resolve(tree, where: only({}));
+        expect(deeplEquals(resolved.toJson(), tree.toJson()), isTrue);
+      });
+
+      test('should not fail on unselected markers that would fail', () {
+        final tree = node('root', {
+          'a': ref('one'),
+          'bad': ref('noSuchRule'),
+          'typo': {'§typo': 1},
+          'boom': ref('boom'),
+        });
+        final resolved = whereResolver().resolve(tree, where: only({'a'}));
+        expect(resolved.data['a'], 1);
+        expect(resolved.data['bad'], {'§': 'noSuchRule'});
+        expect(resolved.data['typo'], {'§typo': 1});
+        expect(resolved.data['boom'], {'§': 'boom'});
+      });
+
+      test('should match a full resolve when done in stages', () {
+        Tree<Json> tree() => node(
+          'root',
+          {'a': ref('viaB'), 'b': ref('one'), 'c': ref('one')},
+          [
+            node('child', {'d': ref('one'), 'e': ref('one')}),
+          ],
+        );
+        final full = whereResolver().resolve(tree());
+
+        final staged = whereResolver().resolve(tree(), where: only({'a', 'd'}));
+        // `a` pulled `b` in; `c` and `e` still wait.
+        expect(staged.data, {
+          'a': 2,
+          'b': 1,
+          'c': {'§': 'one'},
+        });
+        expect(staged.childByPath('child').data, {
+          'd': 1,
+          'e': {'§': 'one'},
+        });
+
+        final rest = whereResolver().resolve(staged);
+        expect(deeplEquals(rest.toJson(), full.toJson()), isTrue);
+      });
+
+      group('pull-in of unselected blockers', () {
+        test('should pull in an input that is an unselected marker', () {
+          final tree = node('root', {
+            'b': ref('viaC'),
+            'c': ref('one'),
+            'other': ref('one'),
+          });
+          final resolved = whereResolver().resolve(tree, where: only({'b'}));
+          expect(resolved.data, {
+            'b': 11,
+            'c': 1,
+            'other': {'§': 'one'},
+          });
+        });
+
+        test('should pull in transitively', () {
+          final tree = node('root', {
+            'a': ref('viaB'),
+            'b': ref('viaC'),
+            'c': ref('one'),
+            'd': ref('one'),
+          });
+          final resolved = whereResolver().resolve(tree, where: only({'a'}));
+          expect(resolved.data, {
+            'a': 12,
+            'b': 11,
+            'c': 1,
+            'd': {'§': 'one'},
+          });
+        });
+
+        test('should pull in what a selector condition waits for', () {
+          final tree = node('root', {
+            'mode': ref('modeOn'),
+            'v': ref('w'),
+            'other': ref('one'),
+          });
+          final resolved = resolver({
+            'one': [
+              {'expression': '1'},
+            ],
+            'modeOn': [
+              {'expression': "'on'"},
+            ],
+            'w': [
+              {'expression': '1'},
+              {
+                'selector': {'#mode': 'on'},
+                'expression': '2',
+              },
+            ],
+          }).resolve(tree, where: only({'v'}));
+          expect(resolved.data, {
+            'mode': 'on',
+            'v': 2,
+            'other': {'§': 'one'},
+          });
+        });
+
+        test('should pull in what a when predicate waits for', () {
+          final tree = node('root', {
+            'h': ref('height'),
+            'v': ref('w'),
+            'other': ref('one'),
+          });
+          final resolved = resolver({
+            'one': [
+              {'expression': '1'},
+            ],
+            'height': [
+              {'expression': '1500.0'},
+            ],
+            'w': [
+              {'expression': '560.0'},
+              {
+                'when': 'h < 2000.0',
+                'inputs': {'h': './#h'},
+                'expression': '320.0',
+              },
+            ],
+          }).resolve(tree, where: only({'v'}));
+          expect(resolved.data, {
+            'h': 1500.0,
+            'v': 320.0,
+            'other': {'§': 'one'},
+          });
+        });
+
+        test('should pull in what an inline expression waits for', () {
+          final tree = node('root', {
+            'x': {
+              '§expression': 'y + 1',
+              '§inputs': {'y': './#y'},
+            },
+            'y': ref('one'),
+            'z': ref('one'),
+          });
+          final resolved = whereResolver().resolve(tree, where: only({'x'}));
+          expect(resolved.data, {
+            'x': 2,
+            'y': 1,
+            'z': {'§': 'one'},
+          });
+        });
+
+        test('should pull in nested markers below the blocker', () {
+          // The input reads `#cfg`, which contains markers at cfg/a and
+          // cfg/xs[0]; a lookalike sibling must stay.
+          final tree = node('root', {
+            'total': ref('sum'),
+            'cfg': {
+              'a': ref('one'),
+              'b': 5,
+              'xs': [ref('one'), 7],
+            },
+            'cfgX': ref('one'),
+            'cfg2': {'z': ref('one')},
+          });
+          final resolved = resolver({
+            'one': [
+              {'expression': '1'},
+            ],
+            'sum': [
+              {
+                'inputs': {'c': './#cfg'},
+                'expression': 'c.a + c.b + c.xs[0] + c.xs[1]',
+              },
+            ],
+          }).resolve(tree, where: only({'total'}));
+          expect(resolved.data, {
+            'total': 14,
+            'cfg': {
+              'a': 1,
+              'b': 5,
+              'xs': [1, 7],
+            },
+            'cfgX': {'§': 'one'},
+            'cfg2': {
+              'z': {'§': 'one'},
+            },
+          });
+        });
+
+        test('should pull in list items below an indexed blocker', () {
+          final tree = node('root', {
+            'total': ref('sum'),
+            'xs': [ref('one'), ref('one')],
+            'ys': [ref('one')],
+          });
+          final resolved = resolver({
+            'one': [
+              {'expression': '1'},
+            ],
+            'sum': [
+              {
+                'inputs': {'xs': './#xs'},
+                'expression': 'xs[0] + xs[1]',
+              },
+            ],
+          }).resolve(tree, where: only({'total'}));
+          expect(resolved.data, {
+            'total': 2,
+            'xs': [1, 1],
+            'ys': [
+              {'§': 'one'},
+            ],
+          });
+        });
+
+        test('should pull in only the marker an indexed path hits', () {
+          // The blocker is `/#xs[0]`: the sibling item stays.
+          final tree = node('root', {
+            'v': ref('first'),
+            'xs': [ref('one'), ref('one')],
+          });
+          final resolved = resolver({
+            'one': [
+              {'expression': '1'},
+            ],
+            'first': [
+              {
+                'inputs': {'x': './#xs[0]'},
+                'expression': 'x + 1',
+              },
+            ],
+          }).resolve(tree, where: only({'v'}));
+          expect(resolved.data, {
+            'v': 2,
+            'xs': [
+              1,
+              {'§': 'one'},
+            ],
+          });
+        });
+
+        test('should pull in a whole node when its data is read', () {
+          // `../#` reads the parent's entire data map: every marker
+          // there blocks the read, none elsewhere does.
+          final sibling = node('sibling', {'s': ref('one')});
+          final root = node(
+            'root',
+            {'k1': ref('one'), 'k2': ref('one')},
+            [
+              node('child', {'total': ref('count')}),
+              sibling,
+            ],
+          );
+          final resolved = resolver({
+            'one': [
+              {'expression': '1'},
+            ],
+            'count': [
+              {
+                'inputs': {'p': '../#'},
+                'expression': 'p.k1 + p.k2',
+              },
+            ],
+          }).resolve(root, where: only({'total'}));
+          expect(resolved.data, {'k1': 1, 'k2': 1});
+          expect(resolved.childByPath('child').data['total'], 2);
+          expect(resolved.childByPath('sibling').data['s'], {'§': 'one'});
+        });
+
+        test('should not confuse nodes that share a path prefix', () {
+          // Blocker is `/a#w`; the dormant marker on node `ab` has the
+          // same key but lives elsewhere.
+          final root = node('root', {}, [
+            node('a', {'w': ref('one')}),
+            node('ab', {'w': ref('one')}),
+            node('c', {'x': ref('readA')}),
+          ]);
+          final resolved = resolver({
+            'one': [
+              {'expression': '1'},
+            ],
+            'readA': [
+              {
+                'inputs': {'w': 'a#w'},
+                'expression': 'w + 1',
+              },
+            ],
+          }).resolve(root, where: only({'x'}));
+          expect(resolved.childByPath('a').data['w'], 1);
+          expect(resolved.childByPath('ab').data['w'], {'§': 'one'});
+          expect(resolved.childByPath('c').data['x'], 2);
+        });
+
+        test('should pull in a blocker found via upward search', () {
+          final root = node(
+            'root',
+            {'limit': ref('one')},
+            [
+              node('child', {'v': ref('readLimit')}),
+            ],
+          );
+          final resolved = resolver({
+            'one': [
+              {'expression': '1'},
+            ],
+            'readLimit': [
+              {
+                'inputs': {'l': '#limit'},
+                'expression': 'l + 1',
+              },
+            ],
+          }).resolve(root, where: only({'v'}));
+          expect(resolved.data['limit'], 1);
+          expect(resolved.childByPath('child').data['v'], 2);
+        });
+
+        test('should surface errors of pulled-in markers', () {
+          final tree = node('root', {'b': ref('viaC'), 'c': ref('boom')});
+          final e = catchException(
+            () => whereResolver().resolve(tree, where: only({'b'})),
+          );
+          expect(e, isA<MissingInputException>());
+          expect(e!.message, contains('rule "boom"'));
+        });
+      });
+
+      group('discovered markers', () {
+        test('should keep markers produced by a selected one selected', () {
+          // `alias` yields another reference at the same location; it
+          // is resolved although `where` was asked only about `a`.
+          final tree = node('root', {'a': ref('alias'), 'b': ref('one')});
+          var calls = 0;
+          final resolved =
+              resolver({
+                'one': [
+                  {'expression': '1'},
+                ],
+                'alias': [
+                  {'expression': "{'§': 'one'}"},
+                ],
+              }).resolve(
+                tree,
+                where: (node, key) {
+                  calls++;
+                  return key == 'a';
+                },
+              );
+          expect(resolved.data, {
+            'a': 1,
+            'b': {'§': 'one'},
+          });
+          expect(calls, 2);
+        });
+      });
+
+      group('termination and errors', () {
+        test('should report a cycle among selected markers as stuck', () {
+          // `c` is dormant but nobody waits for it.
+          final tree = node('root', {
+            'a': ref('viaB'),
+            'b': ref('viaA'),
+            'c': ref('one'),
+          });
+          final e = catchException(
+            () => whereResolver().resolve(tree, where: only({'a', 'b'})),
+          );
+          expect(e, isA<StuckException>());
+          expect(e!.message, contains('Resolution is stuck: 2 item(s)'));
+        });
+
+        test('should report a cycle through a pulled-in marker as stuck', () {
+          // `a` waits for `b`, which is pulled in and waits for `a`.
+          final tree = node('root', {'a': ref('viaB'), 'b': ref('viaA')});
+          final e = catchException(
+            () => whereResolver().resolve(tree, where: only({'a'})),
+          );
+          expect(e, isA<StuckException>());
+          expect(e!.message, contains('Resolution is stuck: 2 item(s)'));
+        });
+
+        test(
+          'should fail for selected markers exactly as without a filter',
+          () {
+            final unknown = node('root', {'a': ref('noSuchRule')});
+            expect(
+              catchException(
+                () => whereResolver().resolve(unknown, where: only({'a'})),
+              ),
+              isA<UnknownRuleException>(),
+            );
+
+            final missing = node('root', {'a': ref('boom')});
+            expect(
+              catchException(
+                () => whereResolver().resolve(missing, where: only({'a'})),
+              ),
+              isA<MissingInputException>(),
+            );
+          },
+        );
+
+        test('should get stuck on a blocker outside a resolved subtree', () {
+          // The dormant-free subtree resolve cannot see the ancestor's
+          // marker, so there is nothing to pull in.
+          final child = node('child', {'v': ref('readLimit')});
+          node('root', {'limit': ref('one')}, [child]);
+          final e = catchException(
+            () => resolver({
+              'one': [
+                {'expression': '1'},
+              ],
+              'readLimit': [
+                {
+                  'inputs': {'l': '#limit'},
+                  'expression': 'l',
+                },
+              ],
+            }).resolve(child, inPlace: true, where: only({'v'})),
+          );
+          expect(e, isA<StuckException>());
+        });
+      });
+
+      group('with the other entry points', () {
+        test('resolveVerbose() should report only what was resolved', () {
+          final tree = node('root', {
+            'b': ref('viaC'),
+            'c': ref('one'),
+            'other': ref('one'),
+          });
+          final (resolved, report) = whereResolver().resolveVerbose(
+            tree,
+            where: only({'b'}),
+            rich: true,
+          );
+          expect(resolved.data['other'], {'§': 'one'});
+          // `c` was pulled in and resolved first, then `b`.
+          expect(report.entries.map((e) => e.location), ['/#c', '/#b']);
+          expect(report.at('/#other'), isEmpty);
+        });
+
+        test('resolveAtomic() should leave unselected markers untouched', () {
+          final child = node('child', {'c': ref('one')});
+          final childMarker = child.data['c'];
+          final tree = node(
+            'root',
+            {'a': ref('one'), 'b': ref('one')},
+            [child],
+          );
+          final result = whereResolver().resolveAtomic(
+            tree,
+            where: only({'a'}),
+          );
+          expect(identical(result, tree), isTrue);
+          expect(tree.data, {
+            'a': 1,
+            'b': {'§': 'one'},
+          });
+          // A node without selected markers is not written back at all.
+          expect(identical(child.data['c'], childMarker), isTrue);
+        });
+
+        test('resolveAtomic() should stay all-or-nothing with a filter', () {
+          final tree = node('root', {'good': ref('one'), 'bad': ref('boom')});
+          expect(
+            () => whereResolver().resolveAtomic(
+              tree,
+              where: only({'good', 'bad'}),
+            ),
+            throwsA(isA<MissingInputException>()),
+          );
+          expect(tree.data['good'], {'§': 'one'});
+          expect(tree.data['bad'], {'§': 'boom'});
+        });
       });
     });
 
