@@ -6,11 +6,12 @@ rules whose CEL expressions evaluate in node context; one
 (ggsuite), no domain-specific dependencies.
 
 **Read `doc/architecture.md` first** — §12 has the decision log
-(D1–D17), §13 the implementation decisions, corrections, and the
+(D1–D18), §13 the implementation decisions, corrections, and the
 post-review revisions (§13.4 review fixes, §13.5/§13.6 format
 revisions, §13.7 ambiguous-tie error, §13.8 `when` predicate, §13.9
 `value` variants + annotation books, §13.10 caller context, §13.11
-partial resolution `where:` + adopt-only-changed).
+partial resolution `where:` + adopt-only-changed, §13.12 variant
+priority, §13.13 cel 0.6.0).
 Do not trust older material (an older internal blog post,
 pre-§13.5 docs): it shows `"§name"` **string** references, which no
 longer exist. Pre-§13.6 material keys rules with a leading `§`
@@ -30,14 +31,19 @@ identifiers.
   the reader. Do not reintroduce state-dependent blocking (an
   `isPending` predicate existed briefly and was deliberately
   removed).
-- Selection: highest-specificity matching variant wins; a
-  same-specificity tie among matches is an `AmbiguousVariantException`
-  (no order-based tie-break — D2 reversed by D13/§13.7, so authors must
-  disambiguate).
+- Selection: the highest-ranked matching variant wins. Rank = selector
+  condition count, then `priority` (§13.12, integer ≥ 0, default
+  0), then `when` over none. A same-rank tie among matches is an
+  `AmbiguousVariantException` (no order-based tie-break — D2 reversed
+  by D13/§13.7, so authors must disambiguate). Priority is for layered
+  books: merge order never decides; a higher layer wins the same case
+  through a higher priority. Priority 0 is omitted from
+  `RuleVariant.toJson`, `ProvenanceEntry.toJson`/`toString` and error
+  messages, so priority-free books behave exactly as before.
 - Variant `when` (§13.8): an optional CEL bool predicate beside the
-  equality `selector`; both must hold. Effective specificity is
-  `2*conditions + (when?1:0)`, so a `when` breaks same-count ties and
-  beats the base; it gives ranges/OR that equality can't. Shares the
+  equality `selector`; both must hold. It breaks ties among variants
+  with the same condition count and priority (so it beats a base of the
+  same priority); it gives ranges/OR that equality can't. Shares the
   variant's `inputs`; `when`-free books behave exactly as before.
 - A variant has exactly one of `expression` (CEL) or `value` (§13.9): a
   non-null, **marker-free** JSON literal, deep-copied on every use
@@ -70,16 +76,17 @@ identifiers.
 - `resolveAtomic` adopts only nodes whose data changed (`deeplEquals`),
   per node, not per key. A plain `Tree<Json>.deepCopy` keeps key order;
   the churn was nested-container identity. A consumer tree type may still
-  reorder on copy — `ds_slot`'s `SlotTree` rebuilds `slot` and `tags`
-  through its constructor, so they come first in the copy — which is why
-  adopting every node used to move `tags` to the front of untouched nodes
-  and adopt-only-changed no longer does.
+  reorder on copy — one that rebuilds some keys (say `tags`) through its
+  constructor puts them first in the copy — which is why adopting every
+  node used to move such keys to the front of untouched nodes and
+  adopt-only-changed no longer does.
 - All errors are subtypes of the sealed `TreeExpressionsException`
   (typed fields; tests should assert types, not only message text).
 
 ## Landmines — do not "simplify" these away
 
-1. **cel 0.5.4+1 prints ANTLR diagnostics to stderr on every parse.**
+1. **cel prints ANTLR diagnostics to stderr on every parse** (0.5.4+1,
+   still in 0.6.0).
    `gg one can commit` never drains child stderr → **deadlocks**
    (dartvm freezes, one `.vm.json` missing under `coverage/test/`).
    That is why `CompiledExpression._parse` replicates the engine's
@@ -118,8 +125,10 @@ identifiers.
    boundary). A cel version bump can break these src imports — the
    conformance fixtures in `test/fixtures/cel_conformance.json` pin
    every engine quirk (int-left arithmetic truncation, identity list
-   equality, unsupported `m[0].key`, bytes-as-int-lists, …) and must
-   be re-run on upgrade.
+   equality, unsupported `m[0].key`, rejected bytes literals, a
+   missing map key as an error, …) and must be re-run on upgrade.
+   cel 0.6.0 broke the member-read message; `_conciseEngineError` now
+   finds the failing inputs from the AST (architecture §13.13).
 
 ## Coverage & workflow
 
@@ -140,9 +149,9 @@ identifiers.
 
 - Each core data-model class has a `factory X.example()`
   (`RuleBook`/`Rule`/`RuleVariant`/`RuleInput`/`Selector`), composed
-  like `Slot.example()` builds on `Size.example()`. They double as the
-  readable shape spec and the golden source, anchored on the doc's
-  `borderWidth` example.
+  bottom-up (`Rule.example()` uses `RuleVariant.example()`). They
+  double as the readable shape spec and the golden source, anchored on
+  the doc's `borderWidth` example.
 - Mirror tests snapshot `example().toJson()` via gg_golden
   `writeGolden` under `test/goldens/<file>/`; `resolver_test` adds an
   end-to-end golden (resolved tree + rich `ResolutionReport`).
@@ -159,19 +168,19 @@ identifiers.
   untouched (the tree stays clean — no sidecar keys, so all invariants
   hold). Report is minimal by default (location, kind, rule key, variant
   index, value); `rich: true` adds the winning selector, its `when`
-  predicate, bound inputs, expression source, and alias chain. One entry
-  per alias hop.
+  predicate and priority, bound inputs, expression source, and alias
+  chain. One entry per alias hop.
   `lib/src/resolution_report.dart` (`ResolutionReport` / `ProvenanceEntry`
   / `ProvenanceKind`). Capture is threaded via a null-gated `_Recorder`,
   so `resolve()` pays nothing.
 - Consumer adapter: **shipped** — a consumer's pipeline step wraps
   `resolveAtomic` (optional book; skips trees with no selected marker, so
   there is nothing to copy) and `resolveVerbose` behind an `onReport`
-  callback, and passes `context` and `where` for staged resolution
-  (`ds_slot`'s `RuleScheduler` runs one resolver this way, ALAP by data
-  key). Downstream wiring lives in the consumer packages (their fitter
-  chain, config rule-book / rule-writes / context, and request wire +
-  validate-rules dry-run).
+  callback, and passes `context` and `where` for staged resolution (a
+  consumer's scheduler runs one resolver this way, as late as possible
+  per data key). Downstream wiring lives in the consumer packages (their
+  pipeline steps, config rule book / rule writes / context, and request
+  wire + validate-rules dry-run).
 - Performance: profiled and optimized on branch `Performance`
   (2026-07-09). Four evidence-gated wins landed — per-select read
   cache, bounded parsed-query cache in `tree_reader`, single-walk
@@ -184,3 +193,19 @@ identifiers.
   measured unnecessary. Not pushed.
 - cel upstreaming candidates: stderr-free parsing, adapter
   pass-through fix.
+
+<!-- helix:claude_md:start -->
+
+# gg workflow
+
+This repo is developed ticket by ticket with the `gg` CLI. Follow the
+development guide, it tells you when to ask the user and which command
+comes next:
+
+@doc/guides/for-ai/ai-dev-guide.md
+
+The steps are also available as skills: `/gg-ticket`, `/gg-commit`,
+`/gg-push`, `/gg-publish`, `/gg-cleanup`. `/gg` lists them and says which
+one comes next.
+
+<!-- helix:claude_md:end -->

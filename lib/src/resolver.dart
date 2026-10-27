@@ -20,31 +20,13 @@ import 'tree_reader.dart';
 
 /// Resolves all rule references and inline expressions in a tree.
 ///
-/// One [resolve] call replaces every reference by the value its
-/// rule's expression evaluates to in the context of the node holding
-/// the reference. Order does not matter: items whose selectors or
-/// inputs read still-unresolved values are deferred and retried. A
-/// resolved tree contains no markers, so [resolve] is idempotent and
-/// re-runnable (resolve → grow the tree → resolve again).
-///
-/// [annotate] and [annotateNode] push every rule to every node instead
-/// of waiting for a marker to pull it.
+/// Items that read unresolved values are retried later. [annotate]
+/// applies every rule to every node instead.
 class Resolver {
-  /// Creates a resolver and compiles all rule book expressions.
+  /// Creates a resolver and compiles all expressions of [ruleBook].
   ///
-  /// Compilation problems are reported immediately with their rule
-  /// key and variant index.
-  ///
-  /// Pass an [expressionCache] to share compiled expressions across
-  /// resolvers. A compiled expression is a pure function of its source
-  /// string, so a consumer that builds one resolver per fit/article can
-  /// hand every resolver the same cache and pay the (ANTLR) compile
-  /// cost once per distinct expression instead of once per resolver.
-  ///
-  /// Pass a [context] to let rules read read-only caller data that is
-  /// not in the tree: inputs of the form `{"context": "a/b"}` read it.
-  /// Like the rule book it travels out-of-band and is never modified.
-  /// It must be marker-free plain data (a [SchemaException] otherwise).
+  /// [expressionCache] shares compiled expressions across resolvers.
+  /// [context] is read-only, marker-free data for `context` inputs.
   Resolver({
     required this.ruleBook,
     Map<String, CompiledExpression>? expressionCache,
@@ -96,25 +78,14 @@ class Resolver {
 
   final Json? _context;
 
-  /// Re-enqueue limit per tree location; exceeding it means an
-  /// expression keeps regenerating itself.
+  /// Maximum re-enqueues per tree location.
   static const int maxResolutionSteps = 64;
 
   // ...........................................................................
   /// Resolves all markers in [tree].
   ///
-  /// By default the tree is deep-copied and the copy is returned;
-  /// the original keeps its references and can be re-resolved later
-  /// against changed context. Copy mode requires the tree root —
-  /// a detached subtree copy would silently lose inherited context.
-  /// With [inPlace] the tree is mutated directly; this also resolves
-  /// a subtree within its full tree. On error the working tree may
-  /// be partially resolved — use [resolveAtomic] for an all-or-nothing
-  /// in-place resolve.
-  ///
-  /// With [where], only the markers it selects are resolved (plus any
-  /// unselected marker a selected one waits for); all others stay
-  /// untouched. See [MarkerFilter].
+  /// Returns a resolved copy of the root; with [inPlace], mutates [tree],
+  /// which may be a subtree. [where] selects the markers to resolve.
   Tree<T> resolve<T extends Json>(
     Tree<T> tree, {
     bool inPlace = false,
@@ -122,13 +93,10 @@ class Resolver {
   }) => _resolve(tree, inPlace, null, where);
 
   // ...........................................................................
-  /// Resolves [tree] like [resolve], additionally returning a
-  /// [ResolutionReport] of what produced each value.
+  /// Resolves [tree] like [resolve] and reports what produced each value.
   ///
-  /// Minimal by default (location, kind, rule key, variant index,
-  /// value); [rich] also captures the winning selector, bound inputs,
-  /// expression source, and alias chain. A location appears once per
-  /// alias hop. [where] filters like in [resolve].
+  /// [rich] adds selector, `when`, priority, inputs, expression and alias
+  /// chain to each entry.
   (Tree<T>, ResolutionReport) resolveVerbose<T extends Json>(
     Tree<T> tree, {
     bool inPlace = false,
@@ -141,31 +109,16 @@ class Resolver {
   }
 
   // ...........................................................................
-  /// Resolves [tree] in place, atomically.
+  /// Resolves the root [tree] in place, leaving it untouched on error.
   ///
-  /// Like `resolve(inPlace: true)` in that [tree] itself is resolved
-  /// and returned — but resolution runs on a copy and its result is
-  /// written back only on success, so on error [tree] is left
-  /// untouched (no partial state). Requires the tree root, like copy
-  /// mode.
-  ///
-  /// Use this from a pipeline step that must mutate the tree it is
-  /// handed yet stay all-or-nothing on failure. Only nodes whose data
-  /// changed are written back; every other node keeps its data map and
-  /// everything nested in it as is. [where] filters like in [resolve].
+  /// Writes back only the data of nodes that changed.
   Tree<T> resolveAtomic<T extends Json>(Tree<T> tree, {MarkerFilter? where}) {
     final resolved = _resolve(tree, false, null, where);
     _adoptData(tree, resolved);
     return tree;
   }
 
-  /// Copies [resolved]'s changed node data onto [original] in lockstep.
-  ///
-  /// Resolution only ever changes node data — replaced values and
-  /// removed optional keys — never the node structure, so the two
-  /// trees are structurally identical here. `clear` before `addAll`
-  /// so optional-removal keys do not linger. Unchanged nodes are left
-  /// alone: adopting them would swap their nested values for copies.
+  /// Copies the data of changed nodes from [resolved] onto [original].
   void _adoptData<T extends Json>(Tree<T> original, Tree<T> resolved) {
     if (!deeplEquals(original.data, resolved.data)) {
       original.data
@@ -201,8 +154,7 @@ class Resolver {
 
     final working = inPlace ? tree : _deepCopy(tree);
 
-    // Unselected markers rest in [dormant] until a selected one waits
-    // for them.
+    // Unselected markers stay dormant until a selected one waits for them.
     var pending = <_WorkItem>[];
     final dormant = <_WorkItem>[];
     for (final item in _collect(working)) {
@@ -230,13 +182,8 @@ class Resolver {
     return working;
   }
 
-  /// Moves the [dormant] items a [deferred] item waits for — at or below
-  /// its blocker location — out of [dormant] and returns them.
-  ///
-  /// A blocker is the shallowest marker on the read path, or the value
-  /// containing nested markers, so a dormant item is never above it.
-  /// Pulled items may themselves block on further dormant items and are
-  /// pulled in the next round.
+  /// Removes the [dormant] items at or below a blocker of [deferred]
+  /// and returns them.
   List<_WorkItem> _pullBlockers(
     List<_WorkItem> deferred,
     List<_WorkItem> dormant,
@@ -253,11 +200,9 @@ class Resolver {
   }
 
   // ...........................................................................
-  /// Evaluates one [rule] at [node] without touching the tree.
+  /// Evaluates [rule] at [node] without touching the tree.
   ///
-  /// Meant for tooling and tests. Returns null when no variant
-  /// matches and the rule is optional; throws when the rule cannot
-  /// be resolved right now (blocked on unresolved values).
+  /// Returns null for an optional rule without match; throws when blocked.
   Object? resolveRule(Tree<Json> node, Rule rule) {
     final context = 'rule "${rule.key}" at node "${node.path}"';
     switch (_select(rule, node)) {
@@ -267,8 +212,8 @@ class Resolver {
           'selector condition "$query" waits for the unresolved '
               'value at "$blocker".',
         ]);
-      case SelectAmbiguous(:final specificity, :final matches):
-        throw _ambiguousVariant(rule, node.path, specificity, matches);
+      case final SelectAmbiguous ambiguous:
+        throw _ambiguousVariant(rule, node.path, ambiguous);
       case SelectNone(:final reasons):
         if (rule.isOptional) return null;
         throw _noVariantMatched(rule, node.path, reasons);
@@ -288,17 +233,10 @@ class Resolver {
   }
 
   // ...........................................................................
-  /// Annotates every node of [tree] with the rules of [ruleBook].
+  /// Evaluates every rule of [ruleBook] at every node of [tree].
   ///
-  /// The push counterpart of [resolve]: every rule is evaluated at
-  /// every node, and a winning variant annotates it with its `value` or
-  /// evaluated `expression`. A rule matching no variant does not apply
-  /// there (`optional` is irrelevant). Returns annotations by node path,
-  /// in rule book order; unannotated nodes are omitted.
-  ///
-  /// Expects a resolved tree: a query that still reads a marker throws
-  /// a [ResolveException]. Never mutates [tree]; works on any subtree
-  /// (queries still see its ancestors).
+  /// Returns the annotations by node path. Expects a resolved tree and
+  /// never mutates it.
   Map<String, List<Annotation>> annotate<T extends Json>(Tree<T> tree) {
     final result = <String, List<Annotation>>{};
     tree.visit((node) {
@@ -309,7 +247,7 @@ class Resolver {
   }
 
   // ...........................................................................
-  /// Like [annotate], but for the single [node] only.
+  /// Like [annotate], for [node] only.
   List<Annotation> annotateNode(Tree<Json> node) => [
     for (final key in ruleBook.keys)
       ?_annotateRule(ruleBook.ruleForKey(key)!, node),
@@ -324,8 +262,8 @@ class Resolver {
           'the query "$query" waits for the unresolved value at '
           '"$blocker"',
         );
-      case SelectAmbiguous(:final specificity, :final matches):
-        throw _ambiguousVariant(rule, node.path, specificity, matches);
+      case final SelectAmbiguous ambiguous:
+        throw _ambiguousVariant(rule, node.path, ambiguous);
       case SelectNone():
         return null;
       case SelectMatch(:final variant, :final index):
@@ -429,8 +367,7 @@ class Resolver {
   // ...........................................................................
   // Worklist steps
 
-  /// Processes one item. Returns true when it was resolved, false
-  /// when it must be retried in the next round.
+  /// Processes [item]; returns false when it must be retried.
   bool _step(_WorkItem item, List<_WorkItem> discovered, _Recorder? recorder) {
     final map = item.value as Map<dynamic, dynamic>;
     if (isReference(map)) {
@@ -518,8 +455,8 @@ class Resolver {
           blocker,
         );
         return false;
-      case SelectAmbiguous(:final specificity, :final matches):
-        throw _ambiguousVariant(rule, item.location, specificity, matches);
+      case final SelectAmbiguous ambiguous:
+        throw _ambiguousVariant(rule, item.location, ambiguous);
       case SelectNone(:final reasons):
         if (rule.isOptional) {
           _recordRemoval(recorder, item, key);
@@ -573,7 +510,6 @@ class Resolver {
     }
     final bound = inputs as Map<String, Object?>;
 
-    // Inline maps only ever build expression variants.
     final source = variant.expression!;
     final CompiledExpression expression;
     try {
@@ -601,7 +537,7 @@ class Resolver {
   }
 
   // ...........................................................................
-  // Provenance recording (verbose mode; no-ops when [recorder] is null)
+  // Provenance recording
 
   void _recordRule(
     _Recorder? recorder,
@@ -625,6 +561,7 @@ class Resolver {
             ? Map<String, Object>.of(variant.selector.conditions)
             : null,
         when: recorder.rich ? variant.when : null,
+        priority: recorder.rich ? variant.priority : null,
         inputs: recorder.rich ? Map<String, Object?>.of(inputs) : null,
         expression: recorder.rich ? variant.expression : null,
         aliasChain: recorder.rich ? List<String>.unmodifiable(chain) : null,
@@ -671,8 +608,7 @@ class Resolver {
   // ...........................................................................
   // Input binding & evaluation
 
-  /// Binds the variant's inputs at [node]. Returns the activation
-  /// map, or a [_Blocked] when a query reads an unresolved value.
+  /// Binds [variant]'s inputs at [node], or returns a [_Blocked].
   Object _bindInputs(
     RuleVariant variant,
     Tree<Json> node,
@@ -699,7 +635,7 @@ class Resolver {
       }
 
       switch (result) {
-        // Only tree reads block: the context holds no markers.
+        // Only tree reads block.
         case ReadBlocked(:final blocker):
           return _Blocked(
             '${describe(name)} ("${input.query}") waits for the '
@@ -725,15 +661,13 @@ class Resolver {
           }
           bound[name] = _copied(input.defaultValue);
         case ReadValue(:final value):
-          // A context value is the caller's data: bind a copy, so no
-          // result can alias it. Tree values are the working copy's.
           bound[name] = input.isContext ? _copied(value) : value;
       }
     }
     return bound;
   }
 
-  /// Inputs for the winning [variant]'s result; a value variant needs none.
+  /// Binds [variant]'s inputs unless it is a value variant.
   Object _bindResultInputs(
     RuleVariant variant,
     Tree<Json> node,
@@ -785,13 +719,10 @@ class Resolver {
         _evaluateWhen(rule, index, variant, atNode),
   );
 
-  /// Evaluates [variant]'s `when` predicate at [node] for selection.
+  /// Evaluates [variant]'s `when` predicate at [node].
   ///
-  /// Binds the variant's inputs (so `when` reads the same values as the
-  /// expression): a blocked input defers ([MatchBlocked]); a missing one
-  /// without a default is an error. Returns [MatchSuccess]/[MatchFailure]
-  /// for the bool result; a non-bool or eval error is an
-  /// [ExpressionException].
+  /// Returns [MatchBlocked] for a blocked input; throws an
+  /// [ExpressionException] for a non-bool result.
   MatchResult _evaluateWhen(
     Rule rule,
     int index,
@@ -850,9 +781,7 @@ class Resolver {
     }
   }
 
-  /// Writes [result] and enqueues any markers it contains (rule
-  /// aliasing and nested references), guarded against expressions
-  /// that regenerate themselves forever.
+  /// Writes [result] and enqueues the markers it contains.
   void _writeAndRescan(
     _WorkItem item,
     Object? result,
@@ -924,30 +853,32 @@ class Resolver {
   AmbiguousVariantException _ambiguousVariant(
     Rule rule,
     String location,
-    int specificity,
-    List<SelectMatch> matches,
-  ) => AmbiguousVariantException(
-    [
-      '${matches.length} variants of rule "${rule.key}" match at '
-          '"$location" with the same specificity ($specificity) — '
-          'the winner is ambiguous:',
-      ...matches.map((m) {
-        final when = m.variant.when;
-        final whenPart = when == null ? '' : ', when "$when"';
-        return '  - variant ${m.index}: selector '
-            '${m.variant.selector.toJson()}$whenPart';
-      }),
-      'Make the selectors (or `when` predicates) specific enough that '
-          'exactly one variant applies.',
-    ],
-    ruleKey: rule.key,
-    location: location,
-    specificity: specificity,
-    variantIndices: [for (final m in matches) m.index],
-  );
+    SelectAmbiguous ambiguous,
+  ) {
+    final SelectAmbiguous(:specificity, :priority, :matches) = ambiguous;
+    final priorityPart = priority == 0 ? '' : ' and priority ($priority)';
+    return AmbiguousVariantException(
+      [
+        '${matches.length} variants of rule "${rule.key}" match at '
+            '"$location" with the same specificity ($specificity)'
+            '$priorityPart — the winner is ambiguous:',
+        ...matches.map((m) {
+          final when = m.variant.when;
+          final whenPart = when == null ? '' : ', when "$when"';
+          return '  - variant ${m.index}: selector '
+              '${m.variant.selector.toJson()}$whenPart';
+        }),
+        'Make the selectors (or `when` predicates) specific enough that '
+            'exactly one variant applies.',
+      ],
+      ruleKey: rule.key,
+      location: location,
+      specificity: specificity,
+      priority: priority,
+      variantIndices: [for (final m in matches) m.index],
+    );
+  }
 
-  // ResolveException, not StuckException: no round runs, the caller
-  // just passed an unresolved tree.
   ResolveException _unresolvedTree(String context, String blocker) =>
       ResolveException([
         'Cannot annotate $context:',
@@ -975,16 +906,13 @@ class Resolver {
 }
 
 // .............................................................................
-/// Selects which markers a resolve works on: [key] is the top-level data
-/// key holding the marker at [node] (for a marker at `node#cfg/sizes[0]`
-/// the key is `cfg`). Return true to resolve it.
+/// Returns true to resolve a marker at [node] under top-level data [key].
 typedef MarkerFilter = bool Function(Tree<Json> node, String key);
 
 // .............................................................................
-/// True when [location] is [blocker] itself or lies below it.
+/// True when [location] is [blocker] or lies below it.
 ///
-/// Both are `'<nodePath>#<dataPath>'`. A location below continues with
-/// `/` or `[`; the empty data path (`'/n#'`) covers the node's whole data.
+/// Both have the form `'<nodePath>#<dataPath>'`.
 bool _isAtOrBelow(String location, String blocker) =>
     location.startsWith(blocker) &&
     (location.length == blocker.length ||
@@ -992,13 +920,12 @@ bool _isAtOrBelow(String location, String blocker) =>
         '/['.contains(location[blocker.length]));
 
 // .............................................................................
-/// Signals that input binding must wait for another resolution.
+/// Input binding that waits for an unresolved value.
 class _Blocked {
   _Blocked(this.reason, {this.query = '', this.blocker = ''});
   final String reason;
 
-  /// The blocked input's query and the marker location — carried so a
-  /// blocked `when` can surface as a [MatchBlocked] during selection.
+  /// The blocked input's query and the location it waits for.
   final String query;
   final String blocker;
 }
@@ -1008,11 +935,10 @@ class _Blocked {
 class _Recorder {
   _Recorder(this.rich);
 
-  /// Whether to capture the rich fields (selector, inputs, expression,
-  /// alias chain).
+  /// Whether to capture the rich fields.
   final bool rich;
 
-  /// The entries collected so far, in resolution order.
+  /// The entries in resolution order.
   final List<ProvenanceEntry> entries = [];
 }
 
@@ -1039,12 +965,11 @@ class _WorkItem {
   /// The top-level data key holding the marker, e.g. `'cfg'`.
   final String topKey;
 
-  /// The data path inside the node, e.g. `'cfg/sizes[0]'`. Kept
-  /// separately — map keys may themselves contain `'#'`.
+  /// The data path inside the node, e.g. `'cfg/sizes[0]'`.
   final String dataPath;
   final String location;
 
-  /// Rule keys already applied at this location (cycle detection).
+  /// Rule keys already applied at this location.
   final List<String> chain;
 
   /// How often this location was re-enqueued.
@@ -1052,8 +977,7 @@ class _WorkItem {
 
   String? blockReason;
 
-  /// The location (same format as [location]) of the unresolved value
-  /// this item last waited for; set whenever the item is deferred.
+  /// The location of the value this item last waited for.
   String blocker = '';
 
   /// Records why and on which location the item was deferred.

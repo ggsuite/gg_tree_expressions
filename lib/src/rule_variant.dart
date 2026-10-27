@@ -20,8 +20,7 @@ const Set<String> celReservedWords = {
 
 final RegExp _identifierPattern = RegExp(r'^[a-zA-Z_][a-zA-Z0-9_]*$');
 
-/// One concrete definition of a rule: an optional selector, optional
-/// inputs, and either one CEL expression or one literal value.
+/// One rule definition: selector, inputs and an expression or a value.
 class RuleVariant {
   /// Creates a variant with exactly one of [expression] and [value].
   RuleVariant({
@@ -30,15 +29,16 @@ class RuleVariant {
     Selector? selector,
     Map<String, RuleInput>? inputs,
     this.when,
+    this.priority = 0,
     this.description,
   }) : assert((expression == null) != (value == null), 'expression xor value'),
+       assert(priority >= 0, 'priority >= 0'),
        selector = selector ?? Selector.none,
        inputs = inputs ?? const {};
 
   /// Parses and validates a variant from rule book JSON.
   ///
-  /// [context] describes the owner (e.g. `'rule "x", variant 2'`)
-  /// for errors.
+  /// [context] names the owner in errors.
   factory RuleVariant.fromJson(Object? json, {required String context}) {
     if (json is! Map) {
       throw SchemaException(['$context must be a JSON object, got: $json']);
@@ -47,6 +47,7 @@ class RuleVariant {
     const allowed = {
       'selector',
       'when',
+      'priority',
       'inputs',
       'expression',
       'value',
@@ -84,6 +85,14 @@ class RuleVariant {
       ]);
     }
 
+    final priority = json['priority'] ?? 0;
+    if (priority is! int || priority < 0) {
+      throw SchemaException([
+        'The "priority" of $context must be an integer >= 0, '
+            'got: $priority (${priority.runtimeType})',
+      ]);
+    }
+
     final description = json['description'];
     if (description != null && description is! String) {
       throw SchemaException([
@@ -98,12 +107,12 @@ class RuleVariant {
       selector: Selector.fromJson(json['selector'], context: context),
       inputs: _inputsFromJson(json['inputs'], context: context),
       when: when as String?,
+      priority: priority,
       description: description as String?,
     );
   }
 
-  /// An example override variant applied to small dark-mode mobile
-  /// screens.
+  /// An example override variant for small dark-mode screens.
   factory RuleVariant.example() => RuleVariant(
     expression: 'screenWidth < 400.0 ? 3.0 : 2.0',
     selector: Selector.example(),
@@ -114,19 +123,17 @@ class RuleVariant {
   /// The CEL expression computing the result; null for a [value] variant.
   final String? expression;
 
-  /// The literal JSON result (marker-free); null for an [expression]
-  /// variant. Copy it before handing it out — the book keeps the instance.
+  /// The marker-free JSON result; null for an [expression] variant.
   final Object? value;
 
-  /// The conditions for this variant to apply; [Selector.none] marks
-  /// the base variant.
+  /// The conditions to apply; [Selector.none] marks the base variant.
   final Selector selector;
 
-  /// An optional CEL predicate (evaluating to bool) that must also hold
-  /// for this variant to apply, in addition to the [selector]. It reads
-  /// tree values through the same [inputs] as [expression]; null when
-  /// absent.
+  /// An optional CEL bool predicate over [inputs] that must also hold.
   final String? when;
+
+  /// The higher priority wins among variants with equal condition count.
+  final int priority;
 
   /// Bindings from CEL identifiers to tree queries.
   final Map<String, RuleInput> inputs;
@@ -134,8 +141,7 @@ class RuleVariant {
   /// Documentation only.
   final String? description;
 
-  /// True when a [when] predicate is present. It breaks specificity
-  /// ties among variants with the same number of selector conditions.
+  /// True when a [when] predicate is present.
   bool get hasWhen => when != null;
 
   /// True when this variant yields a literal [value].
@@ -146,6 +152,7 @@ class RuleVariant {
   Json toJson() => {
     if (selector.conditions.isNotEmpty) 'selector': selector.toJson(),
     if (when != null) 'when': when,
+    if (priority != 0) 'priority': priority,
     if (inputs.isNotEmpty)
       'inputs': {
         for (final MapEntry(:key, :value) in inputs.entries)

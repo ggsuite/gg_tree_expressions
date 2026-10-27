@@ -123,11 +123,11 @@ Every top-level key **must** match:
 
 - A letter, then letters / digits / underscores. No leading `§` — that
   prefix is reserved for the marker keys (§9), not rule names.
-- camelCase is the convention: `panelWidth`, `border_width2`.
+- camelCase is the convention: `cardWidth`, `border_width2`.
 - Keys are **flat** — no dotted namespaces (`geometry.width` is
   invalid).
 - The **same** key string is used verbatim in a reference:
-  `{"§": "panelWidth"}`.
+  `{"§": "cardWidth"}`.
 
 Invalid keys (`"1x"`, `"a.b"`, or a leading `§`) →
 `SchemaException` at load.
@@ -176,6 +176,7 @@ literal `value`.
 {
   "selector":    { <treeQuery>: <literal>, ... },   // optional
   "when":        "<CEL bool predicate>",             // optional (§4.6)
+  "priority":    <integer ≥ 0>,                      // optional (§4.4)
   "inputs":      { <identifier>: <query|longForm>, ... },  // optional
   "expression":  "<CEL expression>",                // exactly one of
   "value":       <any non-null JSON>,               //   expression / value
@@ -183,7 +184,7 @@ literal `value`.
 }
 ```
 
-Allowed keys are **exactly** `selector`, `when`, `inputs`,
+Allowed keys are **exactly** `selector`, `when`, `priority`, `inputs`,
 `expression`, `value`, `description`. Any other key → `SchemaException`.
 Giving both `expression` and `value`, or neither, is also a
 `SchemaException`.
@@ -194,6 +195,7 @@ Giving both `expression` and `value`, or neither, is also a
 | `value` | any non-null JSON | **one of** `expression` / `value` | A literal result, written as a fresh deep copy on every use. `null` is rejected (gg_tree treats null as missing). Must **not** contain a marker — a map with a `§`-prefixed key would be read as a reference or inline expression, so write marker *examples* as strings. Mostly used for static documentation in annotation books (§20). |
 | `selector` | object | no | Equality conditions for this variant to apply. Absent/empty ⇒ **base variant** (specificity 0, matches everywhere). |
 | `when` | string (CEL) | no | A bool predicate that must **also** hold for the variant to apply (§4.6). For ranges/comparisons/OR that equality cannot express. |
+| `priority` | integer ≥ 0 | no | Default 0. Among variants with the same number of selector conditions, the higher priority wins, before `when` counts (§4.4). Meant for layered books (§11). |
 | `inputs` | object | no | Binds CEL identifiers to tree queries or, long form, to caller-context paths (§5.5), shared by `when` and `expression`. Absent ⇒ no inputs. On a `value` variant they only serve its `when`. |
 | `description` | string | no | Documentation only; ignored at runtime. |
 
@@ -253,29 +255,38 @@ value without a default **is** an error (§5.4).
 ### 4.4 Specificity
 
 `specificity = number of conditions`. The base variant (empty selector)
-has specificity 0. More conditions ⇒ more specific ⇒ higher priority
-(§10). If two matching variants share the highest **effective**
-specificity, that is an **error**, not a guess (§10) — make one more
-specific. (A `when` refines this: two variants with the same condition
-count do *not* tie if one has a `when` — it ranks higher; see §4.6.)
+has specificity 0. More conditions ⇒ more specific ⇒ wins (§10),
+whatever the variant's `priority` or `when`.
+
+A variant's **rank** compares three values, in this order:
+
+1. specificity (more conditions win outright),
+2. `priority` (higher wins; default 0),
+3. `when` (a variant with one beats one without, §4.6).
+
+If two matching variants share the highest rank, that is an **error**,
+not a guess (§10) — make one more specific or give it a higher
+`priority`. The `AmbiguousVariantException` names the shared
+specificity and, when not 0, the priority. With every `priority` at 0
+the rank is specificity, then `when`.
 
 ### 4.5 Selector patterns
 
 ```jsonc
 // Match a value inherited from an ancestor's data:
-"selector": { "#articleType": "cabinet" }
+"selector": { "#widgetType": "dialog" }
 
 // Match a value on THIS node only:
-"selector": { "./#kind": "door" }
+"selector": { "./#kind": "button" }
 
 // Match a property of a specific named node found by upward search:
-"selector": { "manufacturer#id": "acme" }
+"selector": { "theme#id": "dark" }
 
 // Match a nested data value:
 "selector": { "config#layout/columns": 3 }
 
 // Multiple conditions (AND):
-"selector": { "manufacturer#id": "acme", "#series": "premium" }
+"selector": { "theme#id": "dark", "#platform": "mobile" }
 ```
 
 ### 4.6 The `when` predicate — logic beyond equality
@@ -287,7 +298,7 @@ evaluate to **bool**. A variant applies when its selector matches
 
 ```jsonc
 {
-  "selector": { "manufacturer#id": "acme" },       // categorical (equality)
+  "selector": { "theme#id": "dark" },              // categorical (equality)
   "when":     "height < 2000.0 || width > 1000.0",  // the rest, in CEL
   "inputs":   { "height": "#height", "width": "#width" },
   "expression": "'compact'"
@@ -298,14 +309,13 @@ evaluate to **bool**. A variant applies when its selector matches
   Declare every identifier the predicate uses there (§5). A blocked
   input defers the variant; a missing one without a default is an
   error; a non-bool result is an error.
-- **Specificity (§10):** effective specificity is
-  `2 × selectorConditions + (has when ? 1 : 0)`. More selector
-  conditions always win; a `when` only breaks ties among variants with
-  the *same* condition count — so a `when`-variant outranks the
+- **Rank (§4.4):** more selector conditions always win, then the higher
+  `priority`; a `when` only breaks ties among variants with the *same*
+  condition count and priority — so a `when`-variant outranks the
   otherwise-identical one, including the base.
 - **OR / ranges for free:** `when: "a || b"`, `"h >= 3.0 && h < 9.0"`,
   `"!premium"`. No separate OR selector syntax exists — use `||`.
-- **Mutual exclusion matters.** Because a same-specificity tie is an
+- **Mutual exclusion matters.** Because a same-rank tie is an
   error (§10), two `when`-variants at the same tier must be mutually
   exclusive (only one true per node). For "either condition ⇒ the
   **same** result", write one variant with `when: "a || b"`; for
@@ -393,7 +403,7 @@ path into it:
 
 ```jsonc
 "inputs": {
-  "h": { "context": "dimensions/basicShape/dimensions/h", "default": 1800 }
+  "h": { "context": "layout/viewport/size/h", "default": 1800 }
 }
 ```
 
@@ -415,9 +425,9 @@ path into it:
   input to pick a variant by context data:
 
   ```jsonc
-  "shelfCount": [
+  "columnCount": [
     { "expression": "4" },
-    { "when": "h < 2000", "inputs": { "h": { "context": "dimensions/h" } },
+    { "when": "h < 2000", "inputs": { "h": { "context": "viewport/h" } },
       "expression": "3" }
   ]
   ```
@@ -547,8 +557,10 @@ Pinned by `test/fixtures/cel_conformance.json`. Supported:
   ternary** (`a < b ? a : b`) or pre-compute via an input.
 - **Unary minus on non-literals**: `-x` fails; write `0 - x` or
   `-1 * x`. (`-4` on a literal is fine.)
-- **Field access after an index**: `m[0].key` fails — write
-  `m[0]["key"]`.
+- **Field access on a computed value**: `m[0].key`, `(c ? m : n).key`
+  and `{'a': 1}.a` fail — only identifier chains like `m.a.b` support
+  `.field`. Use `["key"]`, e.g. `m[0]["key"]`.
+- Bytes literals `b"…"`.
 - Protobuf message construction `x{a: 1}`.
 
 Unknown functions, macros, and the above are rejected at **compile**
@@ -569,6 +581,11 @@ Unknown functions, macros, and the above are rejected at **compile**
   an evaluation error.
 - **Division by zero**, comparing incompatible types (`1 < 'abc'`), and
   `!1` (logical-not on non-bool) are evaluation errors.
+- **A missing map key is an error**, not null: `m.k` and `m['k']` fail
+  when `m` has no key `k` (a key holding `null` is fine). Guard it:
+  `'k' in m ? m.k : fallback`. A failed `.field` read (`m.k`, `m.a.k`)
+  names the input: `Failed to read a member of input "m"`. An index
+  read (`m['k']`) keeps the engine's message.
 
 ### 7.3 Result values and `resultType`
 
@@ -591,7 +608,7 @@ A mismatch → `ResolveException`. `resultType` is a rule-level field
 
 ### 7.4 Results may be structured (growth instructions)
 
-A result can be any JSON, e.g. `{"add": "innerDrawer", "count": 2}`. The
+A result can be any JSON, e.g. `{"add": "tab", "count": 2}`. The
 package itself only writes values; a **consumer** may interpret such a
 value, grow the tree, and `resolve()` again (see §9). A result that
 itself contains a reference map triggers **aliasing** (§9.3).
@@ -703,15 +720,15 @@ When a reference resolves, the rule picks one variant at the node:
    selector, also evaluate its `when` predicate (§4.6). A variant
    **applies** when both hold.
 2. Among the variants that **apply**, choose the one with the highest
-   **effective specificity** — `2 × selectorConditions + (has when ?
-   1 : 0)`. More conditions win outright; a `when` breaks ties among
-   equal condition counts (so a `when`-variant beats the otherwise-
-   identical one, including the base).
-3. **Ties** (two or more apply at equal, highest effective specificity)
-   → an **error** (`AmbiguousVariantException`). The resolver never
-   picks by order; make a selector or `when` more specific so exactly
-   one variant applies. This holds within one book and across merged
-   books alike (§11).
+   **rank** (§4.4): more selector conditions win outright; at equal
+   counts the higher `priority` wins; at equal counts and priority a
+   `when` wins (so a `when`-variant beats the otherwise-identical one,
+   including the base).
+3. **Ties** (two or more apply at the same, highest rank) → an
+   **error** (`AmbiguousVariantException`). The resolver never picks by
+   order; make a selector or `when` more specific, or give one variant
+   a higher `priority`, so exactly one variant applies. This holds
+   within one book and across merged books alike (§11).
 4. If a still-blocked variant *could* win or tie once resolved, the
    item is **deferred** and retried after more resolution.
 5. If **no** variant matches:
@@ -725,17 +742,37 @@ never triggers unexpectedly.
 
 ## 11. Merging rule books
 
-`RuleBook.merge([bookA, bookB, …])` takes books in **ascending
-priority** and concatenates variant lists per rule key.
+`RuleBook.merge([bookA, bookB, …])` concatenates variant lists per rule
+key. Merge order never decides which variant wins: the rank does
+(§10), and a tie is an **error** (§10.3).
 
-- Typical order: `global → vendor → catalog → item` (most specific
-  last).
-- A later book overrides an earlier one only with a **more specific**
-  variant; a same-specificity tie is an **error**, not resolved by
-  order (§10.3).
+Layered books (e.g. `default → team → project`, each one overriding
+the one before) therefore use `priority`:
+
+- **One priority per layer.** Give every variant of a layer the same
+  `priority`, higher for a higher layer (e.g. 0, 1, 2). For the same
+  case — the same selector conditions — the higher layer wins, with or
+  without a `when`.
+- **The same selector keys for the same case.** More conditions win
+  whatever the layer, so a lower layer's variant with more conditions
+  still beats a higher layer's. To override a case, a higher layer
+  repeats its selector keys (or adds more).
 - Conflicting rule-level `optional` or `resultType` across books for the
   same key → `SchemaException`. (`null`/absent defers to the other
   book's value.)
+
+```jsonc
+// default book (layer 0)
+"borderWidth": [
+  { "expression": "1.0" },
+  { "selector": { "theme#id": "dark" }, "expression": "2.0" }
+]
+// project book (layer 1)
+"borderWidth": [
+  { "selector": { "theme#id": "dark" }, "priority": 1, "expression": "3.0" }
+]
+// merged, in any order: dark theme → 3.0, elsewhere → 1.0
+```
 
 ---
 
@@ -796,10 +833,11 @@ them. Failures are typed subclasses of `TreeExpressionsException`.
       `number|string|bool|list|map`.
 
 **Variants**
-- [ ] Only `selector` / `when` / `inputs` / `expression` / `value` /
-      `description`.
+- [ ] Only `selector` / `when` / `priority` / `inputs` / `expression` /
+      `value` / `description`.
 - [ ] Exactly one of `expression` (present, non-empty) or `value`
       (non-null JSON, no `§`-prefixed map key anywhere inside).
+- [ ] `priority`, if present, is an integer ≥ 0.
 - [ ] `description`, if present, is a string.
 
 **Selectors**
@@ -834,13 +872,14 @@ them. Failures are typed subclasses of `TreeExpressionsException`.
 **Semantics**
 - [ ] Non-optional rules have a base variant (or every node is
       guaranteed to match some selector).
-- [ ] No node can match two variants at the same top specificity
-      (same-specificity ties are an error, not order-broken).
+- [ ] No node can match two variants at the same top rank (§4.4;
+      ties are an error, not order-broken).
 - [ ] No circular aliases.
 
 `RuleBook.lint()` additionally flags *legal but suspicious* setups:
-identical rules under two names, duplicate selectors within one rule,
-and non-optional rules without a base variant.
+identical rules under two names, duplicate selectors (with the same
+`when` and `priority`) within one rule, and non-optional rules without
+a base variant.
 
 ---
 
@@ -857,13 +896,13 @@ Reference `{"§": "gap"}` → `4.0` everywhere.
 
 ```jsonc
 {
-  "handleStyle": [
-    { "expression": "'bar'" },                                   // base
-    { "selector": { "#series": "premium" }, "expression": "'inset'" }
+  "buttonStyle": [
+    { "expression": "'flat'" },                                  // base
+    { "selector": { "#plan": "premium" }, "expression": "'raised'" }
   ]
 }
 ```
-`premium` series → `'inset'`; otherwise `'bar'`.
+`premium` plan → `'raised'`; otherwise `'flat'`.
 
 ### 14.3 Reading tree values with a computed result
 
@@ -872,7 +911,7 @@ Reference `{"§": "gap"}` → `4.0` everywhere.
   "columnWidth": [
     {
       "inputs": {
-        "total":   "#cabinetWidth",
+        "total":   "#gridWidth",
         "columns": { "query": "#columns", "default": 1 }
       },
       "expression": "total / columns"
@@ -881,17 +920,17 @@ Reference `{"§": "gap"}` → `4.0` everywhere.
 }
 ```
 Note: with integer inputs this truncates (`§7.2.2`); bind/author doubles
-(`#cabinetWidth` = `1200.0`) for a fractional result.
+(`#gridWidth` = `1200.0`) for a fractional result.
 
 ### 14.4 Specificity ladder
 
 ```jsonc
 {
-  "depth": [
-    { "expression": "560.0" },                                   // spec 0
-    { "selector": { "#type": "wall" }, "expression": "320.0" },  // spec 1
-    { "selector": { "#type": "wall", "#deep": true },            // spec 2 (wins if both)
-      "expression": "350.0" }
+  "padding": [
+    { "expression": "16.0" },                                    // spec 0
+    { "selector": { "#type": "compact" }, "expression": "8.0" }, // spec 1
+    { "selector": { "#type": "compact", "#touch": true },        // spec 2 (wins if both)
+      "expression": "12.0" }
   ]
 }
 ```
@@ -928,11 +967,11 @@ On a node without `isNew == true`, the `badge` key is removed.
 
 ```jsonc
 {
-  "shelves": [
+  "rows": [
     {
-      "inputs": { "h": "#innerHeight" },
+      "inputs": { "h": "#contentHeight" },
       "resultType": "map",
-      "expression": "{ 'kind': 'shelf', 'count': h > 800.0 ? 3 : 2 }"
+      "expression": "{ 'kind': 'row', 'count': h > 800.0 ? 3 : 2 }"
     }
   ]
 }
@@ -951,32 +990,32 @@ Tree data:
 
 ```jsonc
 {
-  "priceTier": [
-    { "expression": "'standard'" },
-    { "selector": { "manufacturer#id": "acme" }, "expression": "'oem'" }
+  "accentColor": [
+    { "expression": "'blue'" },
+    { "selector": { "theme#id": "dark" }, "expression": "'teal'" }
   ]
 }
 ```
-`manufacturer#id` climbs from the marker's node to the root, finds the
-nearest `manufacturer` child, and reads its `id`.
+`theme#id` climbs from the marker's node to the root, finds the
+nearest `theme` child, and reads its `id`.
 
 ### 14.10 Range gate with `when` (partitioned)
 
-Equality can't say "taller than 2000mm", so the height test lives in a
+Equality can't say "taller than 2000", so the height test lives in a
 `when`. The two `when`-variants **partition** the height axis (mutually
 exclusive), so exactly one applies — no ambiguity, no base needed:
 
 ```jsonc
 {
-  "shelfCount": [
+  "columnCount": [
     {
       "when": "h > 2000.0",
-      "inputs": { "h": "./#slot/size/height" },
+      "inputs": { "h": "./#size/height" },
       "expression": "4"
     },
     {
       "when": "h <= 2000.0",
-      "inputs": { "h": "./#slot/size/height" },
+      "inputs": { "h": "./#size/height" },
       "expression": "2"
     }
   ]
@@ -1008,7 +1047,7 @@ OR: `{ "when": "h < 2000.0 || w > 1000.0", "inputs": { … }, "expression":
 **Don't**
 - Don't write references as strings (`"name"`) — use `{"§": "name"}`.
 - Don't put `null`, arrays, or objects as selector literals.
-- Don't leave two `when`-variants at the same specificity both able to
+- Don't leave two `when`-variants at the same rank both able to
   apply — partition them (mutually exclusive), or they error.
 - Don't compare lists/maps with `==`.
 - Don't use `size`, `min`, `max`, macros, or type conversions.
@@ -1049,7 +1088,7 @@ mechanism** is the whole game.
 |---|---|---|---|
 | Q1 | **WHERE** does the effect land? | marker **placement** (which node(s), which data key) | One target ⇒ one marker; N targets ⇒ N markers sharing one rule. |
 | Q2 | **WHAT** value appears there (and its type)? | the **expression result** (+ optional `resultType`) | Must also define the value when the condition is *false* (Q4). |
-| Q3 | **WHEN — categorically** — does the rule apply? | **selector** (`query == literal`) | Catalog, manufacturer, type, series, feature flags — anything expressible as equality. |
+| Q3 | **WHEN — categorically** — does the rule apply? | **selector** (`query == literal`) | Page, theme, platform, type, plan, feature flags — anything expressible as equality. |
 | Q4 | **WHEN — by runtime data** — does the effect trigger? | **inputs + expression** | Comparisons (`>`, `<`, ranges), counts, arithmetic, string tests. **Never a selector.** |
 | Q5 | **Which tree values** does the logic need? | **inputs** (queries) | Each query locates a value *relative to the marker's node*. |
 
@@ -1058,15 +1097,16 @@ mechanism** is the whole game.
 Selectors test **equality only** (`query == literal`). So natural-
 language phrases split into two buckets:
 
-- **Selector material** (categorical / equality): "in catalog XYZ",
-  "for wall cabinets", "when the door is glass", "series = premium".
-- **Expression material** (everything comparative or computed): "taller
-  than 2000mm", "more than 3 shelves", "between 400 and 800", "width ×
+- **Selector material** (categorical / equality): "on the landing
+  page", "for modal dialogs", "when the theme is dark", "plan =
+  premium".
+- **Expression material** (everything comparative or computed): "wider
+  than 1200 px", "more than 3 columns", "between 400 and 800", "width ×
   2", "name contains 'X'". These need an **input** that reads the value
   and an **expression** that compares/computes it.
 
-> If you catch yourself wanting `{"height > 2000": true}` in a selector —
-> stop. That is not legal. Read the height via an `input` and compare in
+> If you catch yourself wanting `{"width > 1200": true}` in a selector —
+> stop. That is not legal. Read the width via an `input` and compare in
 > the `expression`.
 
 ### 16.2 The false-branch obligation
@@ -1090,9 +1130,9 @@ must resolve to *something* for **every** case it can be reached:
 
 ### 16.3 Units and types
 
-- Convert units to the tree's stored representation ("2000mm" → the
-  number `2000.0` if the tree stores millimetres).
-- Prefer **doubles** for measurements (`2000.0`, not `2000`) so
+- Convert units to the tree's stored representation ("75 rem" → the
+  number `1200.0` if the tree stores pixels at 16 px per rem).
+- Prefer **doubles** for measurements (`1200.0`, not `1200`) so
   arithmetic does not truncate (§7.2.2). Comparisons mix int/double
   freely, so a `>` gate is safe either way; arithmetic is where the
   quirk bites.
@@ -1102,7 +1142,7 @@ must resolve to *something* for **every** case it can be reached:
 "the first and last …" is a **placement** decision, not a selector:
 
 - **Preferred — targeted placement**: write the marker only on the nodes
-  the effect names (the first inset node and the last inset node). The
+  the effect names (the first card node and the last card node). The
   rule stays simple; "which nodes" is answered by tree navigation.
 - **Alternative — broad placement + positional selector**: put the
   marker on *every* candidate node and let the rule decide via a
@@ -1118,8 +1158,8 @@ with a selector.
 
 ## 17. Worked translation of the example prompt
 
-> **"If the high shelf in catalog XYZ is taller than 2000mm, the first
-> and last inset positions are fixed."**
+> **"If the hero image on the landing page is wider than 1200 px, the
+> first and last cards are pinned."**
 
 `‹angle brackets›` mark the **domain-specific** bits — the queries and
 node locations that come from the consumer's tree-schema knowledge
@@ -1127,7 +1167,7 @@ node locations that come from the consumer's tree-schema knowledge
 rule mechanism and does not depend on the domain.
 
 > This example is **illustrative of the shape**, not a committed design.
-> The concrete result vocabulary — here a boolean `fixed` with a `false`
+> The concrete result vocabulary — here a boolean `pinned` with a `false`
 > default — is a domain choice still open. The decomposition (selector
 > vs. expression, inputs, placement) is the same whatever that choice
 > turns out to be; only the literal the expression returns changes.
@@ -1136,73 +1176,73 @@ rule mechanism and does not depend on the domain.
 
 | Fragment | Bucket | Mechanism |
 |---|---|---|
-| "in catalog XYZ" | categorical (Q3) | selector `‹catalog-id query› == "XYZ"` |
-| "the high shelf … taller than 2000mm" | runtime numeric (Q4, Q5) | input `shelfHeight = ‹high-shelf height query›`, expression `shelfHeight > 2000.0` |
-| "the first and last inset positions" | effect location (Q1) | a reference on each of the two nodes' `‹fixed key›` |
-| "are fixed" | effect value (Q2) | result `true`; else `false` (Q4.2 false-branch) |
+| "on the landing page" | categorical (Q3) | selector `‹page-id query› == "landing"` |
+| "the hero image … wider than 1200 px" | runtime numeric (Q4, Q5) | input `heroWidth = ‹hero-image width query›`, expression `heroWidth > 1200.0` |
+| "the first and last cards" | effect location (Q1) | a reference on each of the two nodes' `‹pinned key›` |
+| "are pinned" | effect value (Q2) | result `true`; else `false` (Q4.2 false-branch) |
 
 ### 17.2 Rule-book delta (artifact 1)
 
 ```jsonc
 {
-  "insetPositionFixed": [
-    { "expression": "false" },                       // default: not fixed
+  "cardPinned": [
+    { "expression": "false" },                       // default: not pinned
 
     {
-      "selector": { "‹catalog-id query›": "XYZ" },   // scope: catalog XYZ
+      "selector": { "‹page-id query›": "landing" },  // scope: landing page
       "inputs": {
-        "shelfHeight": "‹query to the high shelf's height,
-                         relative to an inset-position node›"
+        "heroWidth": "‹query to the hero image's width,
+                       relative to a card node›"
       },
-      "expression": "shelfHeight > 2000.0"           // taller than 2000mm ⇒ fixed
+      "expression": "heroWidth > 1200.0"             // wider ⇒ pinned
     }
   ]
 }
 ```
 
 Why this shape:
-- The **selector** carries only the categorical part (catalog XYZ).
-- The **height comparison lives in the expression**, fed by an input.
+- The **selector** carries only the categorical part (the landing page).
+- The **width comparison lives in the expression**, fed by an input.
 - The **base variant** (`false`) satisfies the false-branch obligation
-  for nodes outside catalog XYZ; inside XYZ, `shelfHeight > 2000.0`
+  for nodes outside the landing page; on it, `heroWidth > 1200.0`
   yields `true`/`false`. So every placed marker always resolves.
 
 ### 17.3 Marker placement (artifact 2)
 
-Write the reference at the two target nodes' `fixed` slot:
+Write the reference at the two target nodes' `pinned` key:
 
 ```jsonc
-// ‹first inset-position node›.data
-{ "‹fixed key›": { "§": "insetPositionFixed" }, ... }
+// ‹first card node›.data
+{ "‹pinned key›": { "§": "cardPinned" }, ... }
 
-// ‹last inset-position node›.data
-{ "‹fixed key›": { "§": "insetPositionFixed" }, ... }
+// ‹last card node›.data
+{ "‹pinned key›": { "§": "cardPinned" }, ... }
 ```
 
 Both nodes share the one rule; each resolves in **its own** node
-context, so the `‹high-shelf height query›` is evaluated from each inset
+context, so the `‹hero-image width query›` is evaluated from each card
 node.
 
 ### 17.4 Resolved effect
 
-| Catalog | High-shelf height | `fixed` at first & last inset |
+| Page | Hero-image width | `pinned` at first & last card |
 |---|---|---|
-| XYZ | 2100mm | `true` |
-| XYZ | 1800mm | `false` |
-| ABC (any) | any | `false` (base variant) |
+| landing | 1400 px | `true` |
+| landing | 1000 px | `false` |
+| about (any) | any | `false` (base variant) |
 
 ### 17.5 The domain seams (deferred, consumer-specific)
 
 Exactly three `‹…›` placeholders remain, and they are precisely the
 consumer-schema tasks:
 
-1. **`‹catalog-id query›`** — where the catalog identifier lives relative
-   to an inset node (likely an inherited value, e.g. `#catalogId`, or a
-   named ancestor like `catalog#id`).
-2. **`‹high-shelf height query›`** — how to reach the high shelf's height
-   from an inset node (a named-node search or an inherited key).
-3. **The two target nodes and their `‹fixed key›`** — locating "first and
-   last inset positions" and the data key that means "fixed".
+1. **`‹page-id query›`** — where the page identifier lives relative to a
+   card node (likely an inherited value, e.g. `#pageId`, or a named
+   ancestor like `page#id`).
+2. **`‹hero-image width query›`** — how to reach the hero image's width
+   from a card node (a named-node search or an inherited key).
+3. **The two target nodes and their `‹pinned key›`** — locating "the
+   first and last cards" and the data key that means "pinned".
 
 The rule *mechanism* (selector vs. expression split, inputs, base
 variant, marker placement, shared rule) is complete and correct without
@@ -1214,29 +1254,29 @@ addresses.
 ## 18. Two more patterns (contrast the gates)
 
 **Categorical gate → `optional` removal.**
-*"Only wall cabinets get a top light rail."*
+*"Only modal dialogs get a close button."*
 
 ```jsonc
-{ "topLightRail": {
+{ "closeButton": {
     "optional": true,
-    "variants": [ { "selector": { "#type": "wall" }, "expression": "true" } ]
+    "variants": [ { "selector": { "#type": "modal" }, "expression": "true" } ]
 } }
 ```
-Marker on each cabinet's `‹lightRail key›`. Wall ⇒ `true`; every other
-type matches no variant ⇒ the key is **removed** (no rail). Optional
+Marker on each dialog's `‹closeButton key›`. Modal ⇒ `true`; every other
+type matches no variant ⇒ the key is **removed** (no button). Optional
 works here because the gate is *purely categorical*.
 
 **Runtime gate → explicit else value.**
-*"If a cabinet has more than 3 shelves, reduce shelf spacing to 32mm."*
+*"If a toolbar has more than 3 buttons, reduce button spacing to 4 px."*
 
 ```jsonc
-{ "shelfSpacing": [
-    { "inputs": { "n": "‹shelf-count query›" },
-      "expression": "n > 3 ? 32.0 : 64.0" }   // else value is mandatory
+{ "buttonSpacing": [
+    { "inputs": { "n": "‹button-count query›" },
+      "expression": "n > 3 ? 4.0 : 8.0" }   // else value is mandatory
 ] }
 ```
-No selector (applies to all cabinets); the threshold is in the
-expression; `64.0` is the required false-branch value.
+No selector (applies to all toolbars); the threshold is in the
+expression; `8.0` is the required false-branch value.
 
 ---
 
@@ -1302,9 +1342,9 @@ Semantics authors rely on:
   searches upward — so it also matches every *descendant* of a dialog
   that has no `kind` of its own. Use `./#kind` (own node only) unless
   the rule should really apply to the whole subtree.
-- **Selection is unchanged**: highest effective specificity wins;
-  same-specificity ties are an `AmbiguousVariantException`, and one
-  ambiguous node fails the whole call.
+- **Selection is unchanged**: the highest rank wins (§10); same-rank
+  ties are an `AmbiguousVariantException`, and one ambiguous node fails
+  the whole call.
 - **The tree must already be resolved.** A selector, `when` or input that
   still reads a marker throws a `ResolveException` ("call resolve()
   first"). Resolve, then annotate.
@@ -1334,6 +1374,7 @@ Semantics authors rely on:
 {
   "selector":    { "<query>": <string|number|bool>, ... },  // optional
   "when":        "<CEL bool predicate>",                    // optional
+  "priority":    <integer ≥ 0>,                             // optional (0)
   "inputs":      { "<ident>": "<query>"                     // optional
                             | { "query": "<query>", "default": <json> }
                             | { "context": "<a/b>", "default": <json> }, ... },

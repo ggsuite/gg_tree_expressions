@@ -5,6 +5,8 @@
 // found in the LICENSE file in the root of this package.
 
 import 'package:gg_golden/gg_golden.dart';
+import 'package:gg_json/gg_json.dart';
+import 'package:gg_tree/gg_tree.dart';
 import 'package:gg_tree_expressions/gg_tree_expressions.dart';
 import 'package:test/test.dart';
 
@@ -24,7 +26,7 @@ void main() {
           'borderWidth': [
             {'expression': '5'},
             {
-              'selector': {'#type': 'door'},
+              'selector': {'#type': 'dialog'},
               'inputs': {'other': '#otherWidth'},
               'expression': 'other + 5',
             },
@@ -99,7 +101,7 @@ void main() {
         final later = RuleBook.fromJson(<String, dynamic>{
           'width': [
             {
-              'selector': {'#type': 'door'},
+              'selector': {'#type': 'dialog'},
               'expression': '2',
             },
           ],
@@ -193,6 +195,46 @@ void main() {
         expect(message, contains('number vs string'));
       });
 
+      test('should let priority, not order, decide the same case', () {
+        final defaults = RuleBook.fromJson({
+          'borderWidth': [
+            {'expression': '1.0'},
+            {
+              'selector': {'#theme': 'dark'},
+              'expression': '2.0',
+            },
+            {
+              'selector': {'#theme': 'dark', '#size': 'small'},
+              'expression': '3.0',
+            },
+          ],
+        });
+        final project = RuleBook.fromJson({
+          'borderWidth': [
+            {
+              'selector': {'#theme': 'dark'},
+              'priority': 1,
+              'expression': '20.0',
+            },
+          ],
+        });
+        String winner(RuleBook book, Json data) {
+          final rule = book.ruleForKey('borderWidth')!;
+          final node = Tree<Json>(key: 'n', data: data);
+          return (rule.select(node) as SelectMatch).variant.expression!;
+        }
+
+        // In either order, more conditions win first, then priority.
+        for (final merged in [
+          RuleBook.merge([defaults, project]),
+          RuleBook.merge([project, defaults]),
+        ]) {
+          expect(winner(merged, {'theme': 'dark'}), '20.0');
+          expect(winner(merged, {'theme': 'dark', 'size': 'small'}), '3.0');
+          expect(winner(merged, {}), '1.0');
+        }
+      });
+
       test('should return an empty book for zero books', () {
         final merged = RuleBook.merge(<RuleBook>[]);
         expect(merged.keys, isEmpty);
@@ -229,8 +271,8 @@ void main() {
             'value': {'text': 'Base docs.'},
           },
           {
-            'selector': {'#kind': 'door'},
-            'value': {'text': 'Door docs.'},
+            'selector': {'#kind': 'dialog'},
+            'value': {'text': 'Dialog docs.'},
           },
         ],
       };
@@ -243,8 +285,8 @@ void main() {
         final later = RuleBook.fromJson(<String, dynamic>{
           'doc': [
             {
-              'selector': {'#kind': 'drawer'},
-              'value': {'text': 'Drawer docs.'},
+              'selector': {'#kind': 'menu'},
+              'value': {'text': 'Menu docs.'},
             },
           ],
         });
@@ -253,8 +295,8 @@ void main() {
         final variants = merged.ruleForKey('doc')!.variants;
         expect(variants.map((v) => v.value), [
           {'text': 'Base docs.'},
-          {'text': 'Door docs.'},
-          {'text': 'Drawer docs.'},
+          {'text': 'Dialog docs.'},
+          {'text': 'Menu docs.'},
         ]);
       });
 
@@ -335,11 +377,11 @@ void main() {
           'width': [
             {'expression': '0'},
             {
-              'selector': {'#type': 'door'},
+              'selector': {'#type': 'dialog'},
               'expression': '1',
             },
             {
-              'selector': {'#type': 'door'},
+              'selector': {'#type': 'dialog'},
               'expression': '2',
             },
           ],
@@ -360,13 +402,13 @@ void main() {
           'width': [
             {'expression': '0'},
             {
-              'selector': {'#type': 'door'},
+              'selector': {'#type': 'dialog'},
               'when': 'h < 2000.0',
               'inputs': {'h': '#h'},
               'expression': '1',
             },
             {
-              'selector': {'#type': 'door'},
+              'selector': {'#type': 'dialog'},
               'when': 'h >= 2000.0',
               'inputs': {'h': '#h'},
               'expression': '2',
@@ -382,13 +424,13 @@ void main() {
           'width': [
             {'expression': '0'},
             {
-              'selector': {'#type': 'door'},
+              'selector': {'#type': 'dialog'},
               'when': 'h < 2000.0',
               'inputs': {'h': '#h'},
               'expression': '1',
             },
             {
-              'selector': {'#type': 'door'},
+              'selector': {'#type': 'dialog'},
               'when': 'h < 2000.0',
               'inputs': {'h': '#h'},
               'expression': '2',
@@ -401,11 +443,32 @@ void main() {
         expect(findings.first, contains('and `when` predicates'));
       });
 
+      test('should flag identical selectors only at the same priority', () {
+        RuleBook book(int secondPriority) => RuleBook.fromJson({
+          'width': [
+            {'expression': '0'},
+            {
+              'selector': {'#size': 'small'},
+              'priority': 1,
+              'expression': '1',
+            },
+            {
+              'selector': {'#size': 'small'},
+              'priority': secondPriority,
+              'expression': '2',
+            },
+          ],
+        });
+
+        expect(book(2).lint(), isEmpty);
+        expect(book(1).lint().single, contains('variants 1 and 2'));
+      });
+
       test('should report non-optional rules without a base variant', () {
         final book = RuleBook.fromJson(<String, dynamic>{
-          'doorWidth': [
+          'dialogWidth': [
             {
-              'selector': {'#type': 'door'},
+              'selector': {'#type': 'dialog'},
               'expression': '1',
             },
           ],
@@ -416,17 +479,19 @@ void main() {
         expect(findings, hasLength(1));
         expect(
           findings.first,
-          contains('Rule "doorWidth" has no base variant and is not optional'),
+          contains(
+            'Rule "dialogWidth" has no base variant and is not optional',
+          ),
         );
       });
 
       test('should not flag optional rules without a base variant', () {
         final book = RuleBook.fromJson(<String, dynamic>{
-          'doorWidth': {
+          'dialogWidth': {
             'optional': true,
             'variants': [
               {
-                'selector': {'#type': 'door'},
+                'selector': {'#type': 'dialog'},
                 'expression': '1',
               },
             ],
@@ -441,14 +506,14 @@ void main() {
           'width': [
             {'expression': '1'},
             {
-              'selector': {'#type': 'door'},
+              'selector': {'#type': 'dialog'},
               'expression': '2',
             },
           ],
           'height': [
             {'expression': '3'},
             {
-              'selector': {'#type': 'drawer'},
+              'selector': {'#type': 'menu'},
               'expression': '4',
             },
           ],

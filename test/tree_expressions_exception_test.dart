@@ -66,7 +66,18 @@ void main() {
       expect(ambiguous.ruleKey, 'a');
       expect(ambiguous.location, '/#x');
       expect(ambiguous.specificity, 1);
+      expect(ambiguous.priority, 0);
       expect(ambiguous.variantIndices, [0, 1]);
+
+      final ambiguousWithPriority = AmbiguousVariantException(
+        ['x'],
+        ruleKey: 'a',
+        location: '/#x',
+        specificity: 1,
+        priority: 2,
+        variantIndices: [0, 1],
+      );
+      expect(ambiguousWithPriority.priority, 2);
 
       final missing = MissingInputException(['x'], inputName: 'w', query: '#w');
       expect(missing.inputName, 'w');

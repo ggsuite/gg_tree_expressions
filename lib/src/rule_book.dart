@@ -14,7 +14,7 @@ import 'tree_expressions_exception.dart';
 class RuleBook {
   RuleBook._(this._rules);
 
-  /// Creates an empty rule book (inline expressions still resolve).
+  /// Creates an empty rule book.
   factory RuleBook.empty() => RuleBook._({});
 
   /// Parses and validates a rule book from JSON.
@@ -41,17 +41,12 @@ class RuleBook {
     return RuleBook._(rules);
   }
 
-  /// Merges [booksInAscendingPriority] into one book.
+  /// Merges [books] into one book, concatenating variants per rule key.
   ///
-  /// Variant lists are concatenated per rule key (e.g. global → vendor
-  /// → catalog → item). A later book overrides an earlier one with a
-  /// more specific selector; two variants matching at the same
-  /// specificity are an ambiguity error, not resolved by order.
-  /// (Order still decides a rule's `optional`/`resultType`: the last
-  /// book to declare either wins.)
-  factory RuleBook.merge(Iterable<RuleBook> booksInAscendingPriority) {
+  /// Throws a [SchemaException] on conflicting `optional` or `resultType`.
+  factory RuleBook.merge(Iterable<RuleBook> books) {
     final rules = <String, Rule>{};
-    for (final book in booksInAscendingPriority) {
+    for (final book in books) {
       for (final MapEntry(:key, :value) in book._rules.entries) {
         final existing = rules[key];
         rules[key] = existing == null ? value : existing.merged(value);
@@ -61,9 +56,6 @@ class RuleBook {
   }
 
   /// An example rule book covering the shorthand and object forms.
-  ///
-  /// A typed multi-variant rule ([Rule.example]), a shorthand base
-  /// rule, an optional rule without a base variant, and a `value` rule.
   factory RuleBook.example() => RuleBook.fromJson(<String, dynamic>{
     'borderWidth': Rule.example().toJson(),
     'gap': [
@@ -102,9 +94,7 @@ class RuleBook {
   };
 
   // ...........................................................................
-  /// Reports suspicious but legal setups, one finding per line:
-  /// identical variants under different keys, identical selectors
-  /// within one rule, and non-optional rules without a base variant.
+  /// Reports suspicious but legal setups, one finding per line.
   List<String> lint() {
     final findings = <String>[];
     final entries = _rules.entries.toList();
@@ -125,15 +115,14 @@ class RuleBook {
         }
       }
 
-      // Identical selectors (and `when`) within one rule. Variants that
-      // differ only by `when` are not flagged — their predicates may be
-      // mutually exclusive.
+      // Identical selector, `when` and priority within one rule.
       for (var i = 0; i < rule.variants.length; i++) {
         for (var j = i + 1; j < rule.variants.length; j++) {
           final vi = rule.variants[i];
           final vj = rule.variants[j];
           if (deeplEquals(vi.selector.toJson(), vj.selector.toJson()) &&
-              vi.when == vj.when) {
+              vi.when == vj.when &&
+              vi.priority == vj.priority) {
             final also = vi.when == null ? '' : ' and `when` predicates';
             findings.add(
               'Rule "${rule.key}": variants $i and $j have identical '

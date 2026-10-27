@@ -9,6 +9,17 @@ import 'package:test/test.dart';
 
 void main() {
   group('ProvenanceEntry', () {
+    ProvenanceEntry withPriority(int priority) => ProvenanceEntry(
+      location: '/d#w',
+      kind: ProvenanceKind.rule,
+      ruleKey: 'w',
+      variantIndex: 1,
+      value: 3.0,
+      when: 'x > 1.0',
+      priority: priority,
+      aliasChain: const ['w'],
+    );
+
     group('toString()', () {
       test('should render a minimal rule entry', () {
         const e = ProvenanceEntry(
@@ -41,6 +52,17 @@ void main() {
         expect(s, contains('inputs {screenWidth: 380.0}'));
         expect(s, contains('expr "screenWidth < 400.0 ? 3.0 : 2.0"'));
         expect(s, contains('via a → w'));
+      });
+
+      test('should render a priority only when it is not 0', () {
+        expect(
+          withPriority(2).toString(),
+          '/d#w ← w[1] = 3.0  {when "x > 1.0"; priority 2}',
+        );
+        expect(
+          withPriority(0).toString(),
+          '/d#w ← w[1] = 3.0  {when "x > 1.0"}',
+        );
       });
 
       test('should skip empty selector/inputs and single-key chain', () {
@@ -107,6 +129,31 @@ void main() {
           'expression': 'x',
           'aliasChain': ['w'],
         });
+      });
+
+      test('should serialize a priority only when it is not 0', () {
+        final json = withPriority(2).toJson();
+        expect(json, {
+          'location': '/d#w',
+          'kind': 'rule',
+          'ruleKey': 'w',
+          'variantIndex': 1,
+          'value': 3.0,
+          'when': 'x > 1.0',
+          'priority': 2,
+          'aliasChain': ['w'],
+        });
+        expect(json.keys, [
+          'location',
+          'kind',
+          'ruleKey',
+          'variantIndex',
+          'value',
+          'when',
+          'priority',
+          'aliasChain',
+        ]);
+        expect(withPriority(0).toJson().containsKey('priority'), isFalse);
       });
 
       test('should omit null rich fields (minimal rule)', () {

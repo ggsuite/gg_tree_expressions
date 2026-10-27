@@ -31,8 +31,7 @@ class ReadMissing extends ReadResult {
   const ReadMissing();
 }
 
-/// The query touches a still-unresolved value and must be retried
-/// after further resolution.
+/// The query touches an unresolved value and must be retried.
 class ReadBlocked extends ReadResult {
   /// Creates the result naming the [blocker] location.
   const ReadBlocked(this.blocker);
@@ -54,8 +53,7 @@ void validateQuery(String query, {required String context}) {
   }
 }
 
-/// Validates that [path] is a usable data path into the caller context:
-/// non-empty and made of valid segments; throws with [context] if not.
+/// Validates the context data [path]; throws with [context] if invalid.
 void validateContextPath(String path, {required String context}) {
   final segments = parseJsonPath(path);
   if (segments.isEmpty) {
@@ -84,8 +82,7 @@ String messageOf(Object error) {
 }
 
 // .............................................................................
-/// A query parsed once: its [TreeQuery] and data-path [segments].
-/// Cached by query string — a rule book uses few, stable queries.
+/// A parsed [query] with its data path [segments].
 class _ParsedQuery {
   _ParsedQuery(this.query, this.segments);
   final TreeQuery query;
@@ -94,8 +91,7 @@ class _ParsedQuery {
 
 final Map<String, _ParsedQuery> _parseCache = <String, _ParsedQuery>{};
 
-/// Parses [query] once, cached by query string (throws uncached on a
-/// malformed query). Bounded like gg_tree's own query cache.
+/// Parses [query], cached by query string.
 _ParsedQuery _parse(String query) {
   final cached = _parseCache[query];
   if (cached != null) return cached;
@@ -108,12 +104,9 @@ _ParsedQuery _parse(String query) {
 }
 
 // .............................................................................
-/// Reads [query] relative to [node], detecting unresolved markers.
+/// Reads [query] relative to [node] like `Tree.getOrNull`.
 ///
-/// Mirrors `Tree.getOrNull`, but returns [ReadBlocked] when the read
-/// would touch — or search past — a marker (a reference or inline
-/// expression map). Shape errors (e.g. a data path through a non-map)
-/// throw a [TreeExpressionsException] naming query and node.
+/// Returns [ReadBlocked] when the read touches or searches past a marker.
 ReadResult readQuery(Tree<Json> node, String query) {
   final _ParsedQuery pq;
   try {
@@ -127,28 +120,17 @@ ReadResult readQuery(Tree<Json> node, String query) {
   }
   final parsed = pq.query;
 
-  // The '#node/...' namespace reads computed tree properties that live
-  // outside node data and can never hold markers — the marker scan
-  // cannot produce them, so read them the plain way.
   if (parsed.data.startsWith('${Tree.nodeInfoKey}/')) {
     return _realRead(node, query);
   }
 
-  // Single walk: the scan mirrors getOrNull's search and returns the
-  // value itself, so no second read of the same chain is needed. It
-  // defers to the real read only for shape anomalies (rare), which
-  // preserves getOrNull's exact error/edge semantics there.
   return _scanRead(node, parsed, pq.segments) ?? _realRead(node, query);
 }
 
 // .............................................................................
-/// Reads the data [path] (the part of a query after `#`) from the
-/// caller [context].
+/// Reads the data [path] from the caller [context].
 ///
-/// The context is plain data — it never holds markers — so the result is
-/// a [ReadValue] or [ReadMissing], never [ReadBlocked]. A missing
-/// context, an absent key, and a path through an incompatible shape all
-/// read as missing.
+/// Anything that cannot be read is [ReadMissing].
 ReadResult readContext(Json? context, String path) {
   if (context == null) return const ReadMissing();
   final Object? value;
@@ -161,9 +143,7 @@ ReadResult readContext(Json? context, String path) {
 }
 
 // .............................................................................
-/// The plain gg_tree read. Used for the `#node/...` tree-info namespace
-/// and as the fallback when the marker scan hits a shape anomaly. Wraps
-/// engine errors as [QueryException].
+/// Reads [query] with `Tree.getOrNull`; throws a [QueryException].
 ReadResult _realRead(Tree<Json> node, String query) {
   final Object? value;
   try {
@@ -178,8 +158,7 @@ ReadResult _realRead(Tree<Json> node, String query) {
 
   if (value == null) return const ReadMissing();
 
-  // Defensive: tree-info values and shape-anomaly fallbacks never hold
-  // markers. Kept as a guard against future gg_tree semantic changes.
+  // Defensive; never reached.
   if (containsMarker(value)) {
     // coverage:ignore-start
     return ReadBlocked('${node.path}#<result of "$query">');
@@ -189,11 +168,9 @@ ReadResult _realRead(Tree<Json> node, String query) {
 }
 
 // .............................................................................
-/// Walks the same search chain as `Tree.getOrNull` and returns the read
-/// result directly: the resolved value when the search lands on a
-/// marker-free value, [ReadBlocked] when it would read or search past a
-/// marker, [ReadMissing] when nothing is found, or `null` for a shape
-/// anomaly (the caller defers those to the real read).
+/// Reads like `Tree.getOrNull`, detecting markers.
+///
+/// Returns null for a shape anomaly.
 ReadResult? _scanRead(
   Tree<Json> node,
   TreeQuery parsed,
@@ -212,11 +189,8 @@ ReadResult? _scanRead(
       case _Verdict.blocked:
         return ReadBlocked('${target.path}#$prefix');
       case _Verdict.clean:
-        // Value found here (marker-free); markers above are shadowed.
         return ReadValue(value as Object);
       case _Verdict.aborted:
-        // Shape anomaly — defer the whole read to getOrNull, which
-        // resolves or throws exactly as before.
         return null;
       case _Verdict.missing:
         continue;
@@ -228,9 +202,7 @@ ReadResult? _scanRead(
 // .............................................................................
 enum _Verdict { clean, missing, blocked, aborted }
 
-/// Walks [target]'s data along [segments]; reports markers on the
-/// path or in the final value, and carries the resolved value on a
-/// clean read. The root data map itself is never a marker.
+/// Walks [target]'s data along [segments], detecting markers.
 (_Verdict, String, Object?) _scanData(
   Tree<Json> target,
   List<String> segments,
@@ -260,8 +232,7 @@ enum _Verdict { clean, missing, blocked, aborted }
 
     for (final index in indices) {
       if (cur == null) break;
-      // The marker sits at the path walked so far — before this
-      // index is applied.
+      // The marker sits before this index.
       if (isMarker(cur)) {
         return (_Verdict.blocked, walked.join('/'), null);
       }

@@ -2,9 +2,9 @@
   "rich": true,
   "entries": [
     {
-      "location": "/tall#shelves",
+      "location": "/tall#columns",
       "kind": "rule",
-      "ruleKey": "shelfCount",
+      "ruleKey": "columnCount",
       "variantIndex": 1,
       "value": 4,
       "selector": {},
@@ -14,7 +14,7 @@
       },
       "expression": "4",
       "aliasChain": [
-        "shelfCount"
+        "columnCount"
       ]
     },
     {
@@ -31,16 +31,16 @@
       ]
     },
     {
-      "location": "/short#shelves",
+      "location": "/short#columns",
       "kind": "rule",
-      "ruleKey": "shelfCount",
+      "ruleKey": "columnCount",
       "variantIndex": 0,
       "value": 1,
       "selector": {},
       "inputs": {},
       "expression": "1",
       "aliasChain": [
-        "shelfCount"
+        "columnCount"
       ]
     },
     {
@@ -61,16 +61,16 @@
       ]
     },
     {
-      "location": "/wide#shelves",
+      "location": "/wide#columns",
       "kind": "rule",
-      "ruleKey": "shelfCount",
+      "ruleKey": "columnCount",
       "variantIndex": 0,
       "value": 1,
       "selector": {},
       "inputs": {},
       "expression": "1",
       "aliasChain": [
-        "shelfCount"
+        "columnCount"
       ]
     },
     {

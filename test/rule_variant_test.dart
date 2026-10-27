@@ -50,10 +50,10 @@ void main() {
       test('should parse a variant with a selector', () {
         final variant = RuleVariant.fromJson({
           'expression': '10',
-          'selector': {'#type': 'door'},
+          'selector': {'#type': 'dialog'},
         }, context: 'test variant');
 
-        expect(variant.selector.conditions, {'#type': 'door'});
+        expect(variant.selector.conditions, {'#type': 'dialog'});
         expect(variant.selector.specificity, 1);
       });
 
@@ -346,29 +346,29 @@ void main() {
       test('should emit selector, inputs, expression and description', () {
         final variant = RuleVariant.fromJson({
           'expression': 'width * height',
-          'selector': {'#type': 'door'},
+          'selector': {'#type': 'dialog'},
           'inputs': {
             'width': '#width',
             'height': {'query': '#height', 'default': 42},
           },
-          'description': 'Area of a door.',
+          'description': 'Area of a dialog.',
         }, context: 'test variant');
 
         expect(variant.toJson(), {
-          'selector': {'#type': 'door'},
+          'selector': {'#type': 'dialog'},
           'inputs': {
             'width': '#width',
             'height': {'query': '#height', 'default': 42},
           },
           'expression': 'width * height',
-          'description': 'Area of a door.',
+          'description': 'Area of a dialog.',
         });
       });
 
       test('should round-trip through fromJson', () {
         final original = RuleVariant.fromJson({
           'expression': 'width + 1',
-          'selector': {'#kind': 'shelf', '#count': 3},
+          'selector': {'#kind': 'list', '#count': 3},
           'inputs': {
             'width': '#width',
             'depth': {'query': '#depth', 'default': null},
@@ -453,13 +453,77 @@ void main() {
 
       test('serializes when in toJson and round-trips', () {
         final json = {
-          'selector': {'#type': 'door'},
+          'selector': {'#type': 'dialog'},
           'when': 'h > 1.0',
           'inputs': {'h': '#h'},
           'expression': '2.0',
         };
         final variant = RuleVariant.fromJson(json, context: 'x');
         expect(variant.toJson(), json);
+      });
+    });
+
+    group('priority', () {
+      test('should default to 0', () {
+        expect(RuleVariant(expression: 'x').priority, 0);
+        final parsed = RuleVariant.fromJson({
+          'expression': '1',
+        }, context: 'test variant');
+        expect(parsed.priority, 0);
+      });
+
+      test('should assert a non-negative priority in the constructor', () {
+        expect(
+          () => RuleVariant(expression: 'x', priority: -1),
+          throwsA(isA<AssertionError>()),
+        );
+      });
+
+      test('should parse an integer', () {
+        final variant = RuleVariant.fromJson({
+          'priority': 2,
+          'expression': '1',
+        }, context: 'test variant');
+        expect(variant.priority, 2);
+      });
+
+      test('should reject a negative, fractional, string or bool value', () {
+        for (final bad in <Object>[-1, 1.5, '1', true]) {
+          expect(
+            () => RuleVariant.fromJson({
+              'priority': bad,
+              'expression': '1',
+            }, context: 'test variant'),
+            throwsA(
+              isA<SchemaException>().having(
+                (e) => e.message,
+                'message',
+                contains(
+                  'The "priority" of test variant must be an integer >= 0, '
+                  'got: $bad (${bad.runtimeType})',
+                ),
+              ),
+            ),
+            reason: '$bad',
+          );
+        }
+      });
+
+      test('should omit 0 in toJson and round-trip another value', () {
+        expect(RuleVariant(expression: 'x').toJson(), {'expression': 'x'});
+
+        final json = {
+          'when': 'h > 1.0',
+          'priority': 1,
+          'inputs': {'h': '#h'},
+          'expression': '2.0',
+        };
+        final variant = RuleVariant.fromJson(json, context: 'x');
+        expect(variant.toJson(), json);
+        expect(variant.toJson().keys, json.keys);
+        final copy = RuleVariant.fromJson(variant.toJson(), context: 'copy');
+        expect(copy.priority, 1);
+        expect(copy.toJson(), json);
       });
     });
 
@@ -519,16 +583,16 @@ void main() {
 
       test('fromJson keeps selector, when, inputs and description', () {
         final variant = RuleVariant.fromJson({
-          'selector': {'#kind': 'door'},
+          'selector': {'#kind': 'dialog'},
           'when': 'h > 1.0',
           'inputs': {'h': '#h'},
-          'value': 'tall door',
+          'value': 'tall dialog',
           'description': 'Docs.',
         }, context: 'test variant');
-        expect(variant.selector.conditions, {'#kind': 'door'});
+        expect(variant.selector.conditions, {'#kind': 'dialog'});
         expect(variant.when, 'h > 1.0');
         expect(variant.inputs.keys, ['h']);
-        expect(variant.value, 'tall door');
+        expect(variant.value, 'tall dialog');
         expect(variant.description, 'Docs.');
       });
 
@@ -589,7 +653,7 @@ void main() {
 
       test('toJson emits value instead of expression and round-trips', () {
         final json = {
-          'selector': {'#type': 'door'},
+          'selector': {'#type': 'dialog'},
           'when': 'h > 1.0',
           'inputs': {'h': '#h'},
           'value': {

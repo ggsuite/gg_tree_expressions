@@ -4,10 +4,7 @@
 // Use of this source code is governed by terms that can be
 // found in the LICENSE file in the root of this package.
 
-// CompiledExpression is the declared mitigation boundary around the
-// cel engine; it needs engine internals to detect silently swallowed
-// syntax errors and to replace the engine's JSON-hostile type
-// adapter.
+// Uses cel engine internals.
 // ignore_for_file: implementation_imports
 
 import 'package:antlr4/antlr4.dart' hide Parser;
@@ -24,32 +21,18 @@ import 'package:cel/src/parser/parser.dart' as cel_parser;
 import 'tree_expressions_exception.dart';
 import 'tree_reader.dart';
 
-/// A CEL expression compiled once and evaluated many times with
-/// different input bindings.
+/// A CEL expression compiled once and evaluated with many input bindings.
 ///
-/// The mitigation boundary around the `cel` engine's quirks:
-/// - It swallows syntax errors (into an `'<<error>>'` literal) and
-///   prints ANTLR diagnostics to stderr on every parse, deadlocking
-///   runners that do not drain stderr (the gg tool). [compile] parses
-///   listener-free, reports syntax errors with line and column, and
-///   rejects `'<<error>>'` literals (also emitted for unary minus on
-///   non-literals) — so that literal cannot appear in a source.
-/// - Unknown functions and macros are rejected at [compile].
-/// - Its type adapter rejects most list shapes and cannot pass its own
-///   wrapped values through, so programs run with [_JsonTypeAdapter],
-///   which accepts arbitrary JSON.
-/// - Unknown-identifier errors embed the whole activation map;
-///   [evaluate] replaces them with a concise message.
+/// Parses without stderr output, rejects syntax errors and unknown
+/// functions at [compile] and evaluates with JSON-safe values.
 class CompiledExpression {
-  CompiledExpression._(this.source, this._program);
+  CompiledExpression._(this.source, this._program, this._chains);
 
-  /// Compiles [source], reusing [cache] when given (keyed by source).
+  /// Compiles [source], reusing [cache] when given.
   ///
-  /// Throws a [TreeExpressionsException] on syntax errors, on calls
-  /// to functions the engine does not have (`size()`, `min`/`max`,
-  /// macros like `has`/`all`/`exists`/`map`/`filter`, type
-  /// conversions), on unary minus applied to non-literals, and on
-  /// field access after an index (`m[0].key`).
+  /// Throws a [TreeExpressionsException] on syntax errors, unknown
+  /// functions, unary minus on non-literals, field access on a computed
+  /// value and bytes literals.
   factory CompiledExpression.compile(
     String source, {
     Map<String, CompiledExpression>? cache,
@@ -95,12 +78,17 @@ class CompiledExpression {
       throw ExpressionException([
         'Unsupported expression "$source":',
         messageOf(e),
-        'Note: field access after an index is not supported — '
-            'write m[0]["key"] instead of m[0].key.',
+        if (_readsFieldOfComputedValue(ast.expression))
+          'Note: field access on a computed value is not supported — '
+              'use ["key"], e.g. m[0]["key"] instead of m[0].key.',
       ], expression: source);
     }
 
-    final result = CompiledExpression._(source, program);
+    final result = CompiledExpression._(
+      source,
+      program,
+      _memberChains(ast.expression),
+    );
     cache?[source] = result;
     return result;
   }
@@ -110,13 +98,13 @@ class CompiledExpression {
 
   final Program _program;
 
+  /// The member reads of inputs, e.g. `['m', 'a', 'b']` for `m.a.b`.
+  final List<List<String>> _chains;
+
   static final Environment _environment = _JsonEnvironment();
 
   // ...........................................................................
   /// Evaluates the expression with [inputs] bound as CEL variables.
-  ///
-  /// Returns a JSON-compatible Dart value (num, String, bool, List,
-  /// Map with string keys, or null).
   Object? evaluate(Map<String, Object?> inputs) {
     final Object? raw;
     try {
@@ -124,7 +112,7 @@ class CompiledExpression {
     } catch (e) {
       throw ExpressionException([
         'Evaluation of expression "$source" failed:',
-        _conciseEngineError(e, inputs),
+        ..._conciseEngineError(e, inputs),
       ], expression: source);
     }
 
@@ -156,33 +144,73 @@ class CompiledExpression {
   }
 
   // ...........................................................................
-  /// Shortens the engine's attribute errors, which embed the entire
-  /// activation map. The engine uses the same error for missing
-  /// variables and for failed member access on existing ones — the
-  /// input names tell the two apart.
-  String _conciseEngineError(Object error, Map<String, Object?> inputs) {
+  /// Explains an engine error, naming the inputs involved.
+  List<String> _conciseEngineError(Object error, Map<String, Object?> inputs) {
     final text = error.toString();
-    final match = RegExp(
-      r'Could not find MaybeAttribute\(\[AbsoluteAttribute\((\.?\w+)',
-    ).firstMatch(text);
-    if (match == null) return messageOf(error);
-
-    final name = match.group(1)!;
-    if (inputs.containsKey(name)) {
-      return 'Failed to read a member of input "$name" — a path '
-          'segment is null or not a map/list.';
-    }
-    final available = inputs.keys.isEmpty
-        ? '(none)'
-        : inputs.keys.map((k) => '"$k"').join(', ');
-    return 'Unknown variable "$name". Declare it in the "inputs" '
-        'of the variant. Available inputs: $available.';
+    final unknown = _unknownVariable(text, inputs);
+    if (unknown != null) return [unknown];
+    return [?_failedMemberRead(text, inputs), messageOf(error)];
   }
 
   // ...........................................................................
-  /// Parses [source] like the engine does, but without its error
-  /// listeners: no stderr output, and syntax errors are collected
-  /// and thrown with line and column instead of being swallowed.
+  /// The message for an unknown variable, or null for other errors.
+  static String? _unknownVariable(String error, Map<String, Object?> inputs) {
+    final match = _unknownVariablePattern.firstMatch(error);
+    if (match == null) return null;
+    final available = inputs.keys.isEmpty
+        ? '(none)'
+        : inputs.keys.map((k) => '"$k"').join(', ');
+    return 'Unknown variable "${match.group(1)}". Declare it in the '
+        '"inputs" of the variant. Available inputs: $available.';
+  }
+
+  static final _unknownVariablePattern = RegExp(
+    r'Could not find MaybeAttribute\(\[AbsoluteAttribute\((\.?\w+)',
+  );
+
+  // ...........................................................................
+  /// The message naming the inputs whose `.field` read failed, or null.
+  String? _failedMemberRead(String error, Map<String, Object?> inputs) {
+    final match = _memberReadPattern.firstMatch(error);
+    if (match == null) return null;
+    final key =
+        match.group(1) ?? match.group(2) ?? match.group(3) ?? match.group(4);
+    final names = {
+      for (final chain in _chains)
+        if (_firstBrokenKey(chain, inputs) == key) '"${chain.first}"',
+    };
+    return names.isEmpty
+        ? null
+        : 'Failed to read a member of input ${names.join(' or ')} — '
+              'a key is missing, or a value on the path is null or not a '
+              'map.';
+  }
+
+  /// Matches the key in the engine's errors for a failed `.field` read.
+  static final _memberReadPattern = RegExp(
+    r'no_such_field: the map has no key (\w+)\.'
+    r'|Trying to read value of key (\w+) on null'
+    r'|Tried calling: \[\]\("(\w+)"\)'
+    r'|method not found: \x27\[\]\x27[\s\S]*?Arguments: \["(\w+)"\]',
+  );
+
+  // ...........................................................................
+  /// The key at which [chain] first fails to read from [inputs], or null.
+  static String? _firstBrokenKey(
+    List<String> chain,
+    Map<String, Object?> inputs,
+  ) {
+    if (!inputs.containsKey(chain.first)) return null;
+    Object? value = inputs[chain.first];
+    for (final key in chain.skip(1)) {
+      if (value is! Map || !value.containsKey(key)) return key;
+      value = value[key];
+    }
+    return null;
+  }
+
+  // ...........................................................................
+  /// Parses [source] without stderr output; throws on syntax errors.
   static Expr _parse(String source) {
     final collector = _SyntaxErrorCollector();
 
@@ -206,8 +234,7 @@ class CompiledExpression {
   }
 
   // ...........................................................................
-  /// Detects the `'<<error>>'` literals the parser produces instead
-  /// of throwing on syntax errors.
+  /// Detects the `'<<error>>'` literals the parser emits for syntax errors.
   static bool _containsParseError(Expr expr) => switch (expr) {
     StringLiteralExpr(:final value) => value == '<<error>>',
     CallExpr(:final target, :final args) =>
@@ -221,7 +248,7 @@ class CompiledExpression {
     _ => false,
   };
 
-  /// The engine's only callable (non-operator) functions.
+  /// The engine's callable non-operator functions.
   static const _knownFunctions = [
     'contains', 'startsWith', 'endsWith', //
     'matches',
@@ -230,10 +257,7 @@ class CompiledExpression {
   static final RegExp _identifierName = RegExp(r'^[a-zA-Z][a-zA-Z0-9_]*$');
 
   // ...........................................................................
-  /// Finds calls to functions the engine does not know. Those would
-  /// otherwise fail at evaluation with a raw cast error (binary
-  /// calls) instead of a clear compile error. Operator functions
-  /// have non-identifier names like `_+_` and pass through.
+  /// Returns a called function the engine does not know, or null.
   static String? _findUnknownFunction(Expr expr) => switch (expr) {
     CallExpr(:final function, :final target, :final args) =>
       _identifierName.hasMatch(function) && !_knownFunctions.contains(function)
@@ -255,14 +279,48 @@ class CompiledExpression {
           .firstWhere((f) => f != null, orElse: () => null),
     _ => null,
   };
+
+  // ...........................................................................
+  /// The identifier member chains of [expr]: `m.a.b` gives `['m', 'a', 'b']`.
+  static List<List<String>> _memberChains(Expr expr) {
+    final fields = <String>[];
+    var operand = expr;
+    while (operand is SelectExpr) {
+      fields.insert(0, operand.field);
+      operand = operand.operand;
+    }
+    if (fields.isNotEmpty && operand is IdentExpr) {
+      return [
+        [operand.name, ...fields],
+      ];
+    }
+    return [for (final child in _children(operand)) ..._memberChains(child)];
+  }
+
+  // ...........................................................................
+  /// True when a field is read from a computed value, e.g. `m[0].key`.
+  static bool _readsFieldOfComputedValue(Expr expr) => switch (expr) {
+    SelectExpr(:final operand)
+        when operand is! SelectExpr && operand is! IdentExpr =>
+      true,
+    _ => _children(expr).any(_readsFieldOfComputedValue),
+  };
+
+  // ...........................................................................
+  /// The direct subexpressions of [expr].
+  static List<Expr> _children(Expr expr) => switch (expr) {
+    CallExpr(:final target, :final args) => [?target, ...args],
+    SelectExpr(:final operand) => [operand],
+    ListExpr(:final elements) => elements,
+    MapExpr(:final entries) => [
+      for (final e in entries) ...[e.key, e.value],
+    ],
+    _ => const [],
+  };
 }
 
 // .............................................................................
 /// An environment whose programs use [_JsonTypeAdapter].
-///
-/// `Environment.standard()` hard-wires the engine's own registry;
-/// overriding the adapter getter routes every conversion the
-/// interpreter performs through the JSON-safe adapter instead.
 class _JsonEnvironment extends Environment {
   _JsonEnvironment() : super.standard();
 
@@ -273,13 +331,7 @@ class _JsonEnvironment extends Environment {
 }
 
 // .............................................................................
-/// A type adapter whose conversions survive JSON data.
-///
-/// The engine's own adapter rejects lists other than `List<String>` /
-/// `List<Value>` and does not pass its own `ListValue`/`NullValue`
-/// through — binding lists, indexing into bound maps, and ternary
-/// list/null branches would all throw. This adapter accepts every
-/// JSON shape and passes wrapped values through.
+/// A type adapter accepting all JSON and passing wrapped values through.
 class _JsonTypeAdapter extends TypeRegistry {
   @override
   Value nativeToValue(dynamic value) {

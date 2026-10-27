@@ -62,22 +62,22 @@ void main() {
 |---|---|
 | Reference | A map value `{"§": "ruleName"}` in tree data. Replaced by the rule's result at its exact location — also inside nested maps and lists. |
 | Rule | A named list of variants under a rule key like `"borderWidth"`. |
-| Variant | Optional `selector`, optional `when` predicate, optional `inputs`, and either one CEL `expression` or one literal `value`. |
+| Variant | Optional `selector`, optional `when` predicate, optional `priority`, optional `inputs`, and either one CEL `expression` or one literal `value`. |
 | Selector | Conditions `treeQuery == literal`, all of which must hold. |
 | Inputs | Explicit bindings from CEL identifiers to tree queries (evaluated from the node holding the reference) or to paths into the resolver's read-only caller context. |
 
 ### Precedence
 
-The variant with the highest **effective specificity** wins —
-`2 * selectorConditions + (when ? 1 : 0)`, so more conditions win
-outright (CSS-like) and a `when` predicate breaks ties among equal
-counts. If two or more variants match at that same specificity,
-resolution fails with an `AmbiguousVariantException` — ties are an
-error, never broken by order, so make selectors specific enough that
-exactly one wins. `RuleBook.merge` takes books in ascending priority
-(e.g. global → vendor → item). If no variant matches, resolution fails
-with the per-variant reasons — unless the rule is `optional` (see
-below).
+The variant with the highest **rank** wins. Ranks compare the number of
+selector conditions (more win outright, CSS-like), then the variant's
+optional `priority` (default 0), then a `when` predicate over none. If
+two or more variants match at that same rank, resolution fails with an
+`AmbiguousVariantException` — ties are an error, never broken by order,
+so make selectors specific enough that exactly one wins.
+`RuleBook.merge` concatenates books (e.g. default → team → project);
+to let a higher layer override the same case, give its variants a
+higher `priority`. If no variant matches, resolution fails with the
+per-variant reasons — unless the rule is `optional` (see below).
 
 ### Complex conditions with `when`
 
@@ -88,7 +88,7 @@ its selector matches **and** `when` evaluates to `true`:
 
 ```jsonc
 {
-  "selector": { "manufacturer#id": "acme" },
+  "selector": { "theme#id": "dark" },
   "when": "height < 2000.0 || width > 1000.0",
   "inputs": { "height": "#height", "width": "#width" },
   "expression": "'compact'"
@@ -96,7 +96,7 @@ its selector matches **and** `when` evaluates to `true`:
 ```
 
 A `when` outranks the otherwise-identical variant (including the base).
-Because same-specificity ties are an error, `when` predicates meant as
+Because same-rank ties are an error, `when` predicates meant as
 alternatives should be mutually exclusive; for "either condition ⇒ the
 same result" use one `when` with `||`.
 
@@ -122,9 +122,9 @@ input (exactly one of `query` / `context` per long-form input):
 final resolver = Resolver(
   ruleBook: ruleBook,
   context: {
-    'dimensions': {
-      'basicShape': {
-        'dimensions': {'h': 2000},
+    'layout': {
+      'viewport': {
+        'size': {'h': 2000},
       },
     },
   },
@@ -133,7 +133,7 @@ final resolver = Resolver(
 
 ```jsonc
 "inputs": {
-  "h": { "context": "dimensions/basicShape/dimensions/h", "default": 1800 }
+  "h": { "context": "layout/viewport/size/h", "default": 1800 }
 }
 ```
 
@@ -263,8 +263,9 @@ print(report);
 Each `ProvenanceEntry` carries, at minimum, the `location`, the `kind`
 (`rule` / `inline` / `optionalRemoval`), the `ruleKey`, the
 `variantIndex`, and the `value`. Pass `rich: true` to also capture the
-winning variant's `selector`, its `when` predicate (if any), the bound
-`inputs`, the `expression` source, and the `aliasChain`. A location
+winning variant's `selector`, its `when` predicate (if any), its
+`priority` (shown when not 0), the bound `inputs`, the `expression`
+source, and the `aliasChain`. A location
 appears once per alias hop.
 `report.at(location)` filters, and both `ResolutionReport` and
 `ProvenanceEntry` have `toJson()`. `resolve()` itself is unchanged and
@@ -282,11 +283,12 @@ for cross-language authoring parity. Highlights:
   construction and indexing.
 - **Not** supported: `size()`, macros (`has`, `all`, `exists`,
   `map`, `filter`), type conversions, timestamps, unary minus
-  on non-literals (`-x`), and field access after an index (write
-  `m[0]["key"]` instead of `m[0].key`).
+  on non-literals (`-x`), field access on a computed value (write
+  `m[0]["key"]` instead of `m[0].key`), and bytes literals.
 - Gotchas: `int + double` truncates when the int is on the left
-  (write `400.0`), list/map equality is identity, bytes literals
-  behave as integer lists.
+  (write `400.0`), list/map equality is identity, and reading a
+  missing map key (`m.k`, `m["k"]`) is an error — guard it with
+  `'k' in m ? m.k : fallback`.
 
 No `min`/`max` built-ins: use the ternary (`a < b ? a : b`).
 
@@ -295,9 +297,10 @@ No `min`/`max` built-ins: use the ternary (`a < b ? a : b`).
 All errors are subtypes of the sealed `TreeExpressionsException`
 (`SchemaException`, `ExpressionException`, `QueryException`,
 `UnknownRuleException`, `CircularAliasException`,
-`NoVariantException`, `MissingInputException`, `StuckException`,
-`ResolveException`) carrying typed fields — catch categories instead
-of parsing messages.
+`NoVariantException`, `AmbiguousVariantException` (with the tied
+variants' `specificity` and `priority`), `MissingInputException`,
+`StuckException`, `ResolveException`) carrying typed fields — catch
+categories instead of parsing messages.
 
 Every failure names the node path, rule key, variant, and — where
 applicable — the alternatives that were considered: unknown rules get

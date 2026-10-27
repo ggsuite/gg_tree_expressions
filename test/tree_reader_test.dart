@@ -83,9 +83,9 @@ void main() {
 
   group('readContext()', () {
     final context = <String, dynamic>{
-      'dimensions': {
-        'basicShape': {
-          'dimensions': {'h': 2000},
+      'layout': {
+        'viewport': {
+          'size': {'h': 2000},
         },
       },
       'xs': [
@@ -97,19 +97,16 @@ void main() {
     };
 
     test('should read nested values with / and . separators', () {
-      final slash = readContext(context, 'dimensions/basicShape/dimensions/h');
-      final dot = readContext(context, 'dimensions.basicShape.dimensions.h');
+      final slash = readContext(context, 'layout/viewport/size/h');
+      final dot = readContext(context, 'layout.viewport.size.h');
       expect((slash as ReadValue).value, 2000);
       expect((dot as ReadValue).value, 2000);
     });
 
     test('should read maps, lists, and falsy values', () {
-      expect(
-        (readContext(context, 'dimensions/basicShape') as ReadValue).value,
-        {
-          'dimensions': {'h': 2000},
-        },
-      );
+      expect((readContext(context, 'layout/viewport') as ReadValue).value, {
+        'size': {'h': 2000},
+      });
       expect((readContext(context, 'xs[1]') as ReadValue).value, [10, 20]);
       expect((readContext(context, 'xs[1][0]') as ReadValue).value, 10);
       expect((readContext(context, 'xs[0]/n') as ReadValue).value, 1);
@@ -209,8 +206,7 @@ void main() {
       });
 
       test('should read tree info via #node/... without scanning', () {
-        // The reference sits right next to the node info — it must
-        // not block the read.
+        // The reference next to the node info does not block the read.
         final me = node('me', {'x': ref()});
         final result = readQuery(me, '#node/key');
         expect((result as ReadValue).value, 'me');
@@ -294,9 +290,7 @@ void main() {
       });
 
       test('should block instead of searching past an inline map', () {
-        // The nearest 'cfg' is still an unresolved inline expression.
-        // Searching past it to the root's cfg/depth would resolve
-        // against the wrong context — the read must wait.
+        // The nearest 'cfg' is unresolved, so the read waits.
         final leaf = node('leaf', {
           'cfg': {'§expression': '1.0'},
         });

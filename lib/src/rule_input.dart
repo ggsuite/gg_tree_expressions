@@ -9,12 +9,9 @@ import 'package:gg_json/gg_json.dart';
 import 'tree_expressions_exception.dart';
 import 'tree_reader.dart';
 
-/// A named binding from a CEL identifier to a value, evaluated relative
-/// to the node holding the reference: either a tree [query] or a path
-/// into the resolver's caller [context].
+/// Binds a CEL identifier to a tree [query] or a caller [context] path.
 class RuleInput {
-  /// Creates an input reading exactly one of [query] and [context],
-  /// optionally with a default.
+  /// Creates an input reading exactly one of [query] and [context].
   RuleInput({
     this.query,
     this.context,
@@ -22,11 +19,9 @@ class RuleInput {
     this.hasDefault = false,
   }) : assert((query == null) != (context == null), 'query xor context');
 
-  /// Parses an input from rule book JSON.
+  /// Parses an input from rule book JSON: a query string or a map.
   ///
-  /// Accepts the short form (a query string) and the long form
-  /// (`{"query": …, "default": …}` or `{"context": …, "default": …}`).
-  /// [context] describes the owner for errors.
+  /// [context] names the owner in errors.
   factory RuleInput.fromJson(Object? json, {required String context}) {
     if (json is String) {
       validateQuery(json, context: context);
@@ -106,24 +101,20 @@ class RuleInput {
     ]);
   }
 
-  /// An example input (long form) reading `screen#width`, defaulting to
-  /// `4.0`. The short form is just the query string (e.g. `'#width'`).
+  /// An example input reading `screen#width` with the default `4.0`.
   factory RuleInput.example() =>
       RuleInput(query: 'screen#width', defaultValue: 4.0, hasDefault: true);
 
-  /// The tree query bound to the CEL identifier; null for a [context]
-  /// input.
+  /// The tree query; null for a [context] input.
   final String? query;
 
-  /// The data path (`a/b`, `a.b`, `xs[0]`, …) into the resolver's caller
-  /// context bound to the CEL identifier; null for a [query] input.
+  /// The caller context path, e.g. `a/b`; null for a [query] input.
   final String? context;
 
   /// The value used when the query or context path resolves to nothing.
   final Object? defaultValue;
 
-  /// True when a default was declared. Without one, an unresolvable
-  /// query or context path is an error.
+  /// True when a default was declared.
   final bool hasDefault;
 
   /// True when this input reads the caller [context], not the tree.

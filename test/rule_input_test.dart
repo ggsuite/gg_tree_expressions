@@ -199,9 +199,9 @@ void main() {
 
         test('should parse a context path', () {
           final input = RuleInput.fromJson({
-            'context': 'dimensions/basicShape/dimensions/h',
+            'context': 'layout/viewport/size/h',
           }, context: 'input "h" of rule "a"');
-          expect(input.context, 'dimensions/basicShape/dimensions/h');
+          expect(input.context, 'layout/viewport/size/h');
           expect(input.isContext, isTrue);
           expect(input.query, isNull);
           expect(input.hasDefault, isFalse);

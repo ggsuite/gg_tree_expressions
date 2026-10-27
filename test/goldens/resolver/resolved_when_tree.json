@@ -11,7 +11,7 @@
       "_data": {
         "height": 2400.0,
         "width": 600.0,
-        "shelves": 4,
+        "columns": 4,
         "isCompact": false
       }
     },
@@ -22,7 +22,7 @@
       "_data": {
         "height": 700.0,
         "width": 600.0,
-        "shelves": 1,
+        "columns": 1,
         "isCompact": true
       }
     },
@@ -33,7 +33,7 @@
       "_data": {
         "height": 1500.0,
         "width": 1400.0,
-        "shelves": 1,
+        "columns": 1,
         "isCompact": true
       }
     }

@@ -178,8 +178,7 @@ void main() {
         });
 
         test('should reuse a cached read instead of reading again', () {
-          // The node holds w=2, but the cache claims 99. A cache hit
-          // makes the "== 99" condition succeed, proving no re-read.
+          // The node holds w=2; only the cached 99 makes "== 99" succeed.
           final me = node('me', {'w': 2});
           final selector = Selector.fromJson({'./#w': 99}, context: 'x');
           final cache = <String, ReadResult>{'./#w': const ReadValue(99)};

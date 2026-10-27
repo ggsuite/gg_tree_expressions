@@ -19,13 +19,7 @@ enum ProvenanceKind {
 }
 
 // .............................................................................
-/// What produced the value at a tree location, recorded by
-/// [Resolver.resolveVerbose].
-///
-/// Minimal fields ([location], [kind], [ruleKey], [variantIndex],
-/// [value]) are always present; rich fields ([selector], [inputs],
-/// [expression], [aliasChain]) are set only when the resolve ran with
-/// `rich: true`.
+/// What produced the value at a tree location in a verbose resolve.
 class ProvenanceEntry {
   /// Creates a provenance entry.
   const ProvenanceEntry({
@@ -36,6 +30,7 @@ class ProvenanceEntry {
     this.value,
     this.selector,
     this.when,
+    this.priority,
     this.inputs,
     this.expression,
     this.aliasChain,
@@ -47,24 +42,23 @@ class ProvenanceEntry {
   /// What produced the value.
   final ProvenanceKind kind;
 
-  /// The rule key that produced the value, or null for an inline
-  /// expression.
+  /// The producing rule key, or null for an inline expression.
   final String? ruleKey;
 
-  /// The index of the winning variant in the merged rule, or null for
-  /// inline expressions and optional removals.
+  /// The index of the winning variant, or null when there is none.
   final int? variantIndex;
 
-  /// The produced value. Null for an optional removal.
+  /// The produced value; null for an optional removal.
   final Object? value;
 
-  /// Rich only: the winning variant's selector conditions (empty for a
-  /// base variant); null otherwise.
+  /// Rich only: the winning variant's selector conditions.
   final Map<String, Object>? selector;
 
-  /// Rich only: the winning variant's `when` predicate, or null when the
-  /// variant has none (or in minimal mode).
+  /// Rich only: the winning variant's `when` predicate.
   final String? when;
+
+  /// Rich only: the winning variant's priority; omitted when 0.
+  final int? priority;
 
   /// Rich only: the inputs bound for the expression (name → value).
   final Map<String, Object?>? inputs;
@@ -72,8 +66,7 @@ class ProvenanceEntry {
   /// Rich only: the CEL expression source.
   final String? expression;
 
-  /// Rich only: the rule keys applied at this location (length > 1 for
-  /// aliases).
+  /// Rich only: the rule keys applied at this location.
   final List<String>? aliasChain;
 
   // ...........................................................................
@@ -91,6 +84,7 @@ class ProvenanceEntry {
     final detail = <String>[
       if (selector != null && selector!.isNotEmpty) 'selector $selector',
       if (when != null) 'when "$when"',
+      if (_hasPriority) 'priority $priority',
       if (inputs != null && inputs!.isNotEmpty) 'inputs $inputs',
       if (expression != null) 'expr "$expression"',
       if (aliasChain != null && aliasChain!.length > 1)
@@ -109,20 +103,19 @@ class ProvenanceEntry {
     if (kind != ProvenanceKind.optionalRemoval) 'value': value,
     if (selector != null) 'selector': selector,
     if (when != null) 'when': when,
+    if (_hasPriority) 'priority': priority,
     if (inputs != null) 'inputs': inputs,
     if (expression != null) 'expression': expression,
     if (aliasChain != null) 'aliasChain': aliasChain,
   };
+
+  bool get _hasPriority => (priority ?? 0) != 0;
 }
 
 // .............................................................................
 /// The provenance of every value produced by [Resolver.resolveVerbose].
-///
-/// Entries are in resolution order. A location appears more than once
-/// when a rule alias resolved it in several hops (one entry per hop).
 class ResolutionReport {
-  /// Creates a report over [entries]. [rich] records whether the
-  /// resolve captured the rich fields.
+  /// Creates a report over [entries].
   ResolutionReport({required List<ProvenanceEntry> entries, this.rich = false})
     : entries = List.unmodifiable(entries);
 
