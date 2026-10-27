@@ -26,8 +26,8 @@ Provide a small, open-source Dart package that lets consumers
 One sentence: *values in a tree can say "ask rule X", and the resolver
 answers every such question in place.*
 
-The package is generic. It knows nothing about furniture, catalogs, or
-any other domain — it depends only on `gg_tree`, `gg_json`, and `cel`.
+The package is generic. It knows nothing about any domain — it depends
+only on `gg_tree`, `gg_json`, and `cel`.
 Domain semantics (what the resolved values *mean*) belong to consumers.
 
 ---
@@ -42,8 +42,8 @@ code review that refine it:
 |---|---|
 | Rules address tree properties via inheritance and relative/absolute paths | Directly supported: `Tree.getOrNull` already implements upward search (`searchToRoot`), own-node anchoring (`./#key`), node paths (`a/b#key`), and absolute paths. The rule system reuses this untouched. |
 | "Resolution happens in one step over the whole tree, root-down" | Almost. A strict single root-down pass breaks when a rule's input reads a value that is *itself* a still-unresolved reference on a sibling or via an absolute path. The design below keeps the single `resolve()` call but implements it as a **worklist with deferral** — order-independent, with built-in cycle detection. |
-| References are written as `{key: "§ruleName"}` string values | Confirmed and kept. Note the `§` prefix appears in two places with different roles: as the **rule book key** (`"§panelWidth": [...]`) and as the **reference value** in tree data (`"§panelWidth"`). Tree data *keys* stay plain camelCase. |
-| Selectors (formerly "tags") pick rule variants per manufacturer/catalog/… | Modeled as tree-query → literal equality conditions. Works because step 1 of the strategy (standardized tree) guarantees the queried paths exist. In this package that standardization is a *consumer contract*, not code. |
+| References are written as `{key: "§ruleName"}` string values | Confirmed and kept. Note the `§` prefix appears in two places with different roles: as the **rule book key** (`"§cardWidth": [...]`) and as the **reference value** in tree data (`"§cardWidth"`). Tree data *keys* stay plain camelCase. |
+| Selectors (formerly "tags") pick rule variants per theme/platform/… | Modeled as tree-query → literal equality conditions. Works because step 1 of the strategy (standardized tree) guarantees the queried paths exist. In this package that standardization is a *consumer contract*, not code. |
 | CEL as engine; rules also producible from JavaScript | `cel` 0.5.4+1 (Dart) and `@bufbuild/cel` (TS) both implement the CEL spec. Keeping expressions inside the common subset + shared JSON test fixtures gives cross-language parity. |
 | Existing CEL usage (`showIf` in a downstream package) | Works, but substitutes query results into the expression *source* via regex and recompiles per evaluation (its compile cache is keyed inconsistently and rarely hits). This package instead compiles each expression **once** and binds inputs per evaluation through CEL's activation map. |
 | Rule results: variables, growth instructions, processing-step control | Only **values** are in scope here. Growth and processing-step control are consumer interpretations of resolved values (see §9). The resolver is deliberately re-runnable so consumers can loop resolve → grow → resolve. |
@@ -111,6 +111,7 @@ plain concatenation per key.
 | `value` | any non-null JSON | one of `expression` / `value` | A literal result, deep-copied on every use. Must not contain a marker (a map with a `§`-prefixed key). Both or neither of `expression`/`value` is a `SchemaException`. See §13.9. |
 | `selector` | object: treeQuery → literal | no | Equality conditions for this variant to apply. Absent/empty = base variant. |
 | `when` | string (CEL) | no | A predicate (must evaluate to bool) that must also hold for the variant to apply. Reads tree values through the same `inputs` as `expression`; enables ranges/comparisons/OR that equality selectors cannot. See §4.4 for specificity, §13.8. |
+| `priority` | integer ≥ 0 | no | Default 0. Ranks the variant after the selector-condition count and before `when` (§4.4, §13.12). |
 | `inputs` | object: identifier → query or `{context}` | no | Binds CEL identifiers to tree queries (or, long form, to a path into the resolver's caller context, §13.10), shared by `when` and `expression`. Identifier must be a valid CEL identifier; query uses `gg_tree` query syntax. |
 | `description` | string | no | Documentation only. |
 
@@ -137,8 +138,8 @@ An input may instead read the resolver's read-only caller context with
   value a JSON scalar (string, number, bool). The condition holds when
   `node.getOrNull(query) == literal`.
 - Queries use normal `gg_tree` semantics, evaluated **from the node
-  holding the reference** — so `manufacturer#id` finds the nearest
-  ancestor's `manufacturer` child node, `#articleType` searches data
+  holding the reference** — so `theme#id` finds the nearest
+  ancestor's `theme` child node, `#platform` searches data
   upward, `./#x` anchors to the node itself.
 - A query that resolves to nothing makes the condition **false** (not
   an error).
@@ -149,19 +150,21 @@ An input may instead read the resolver's read-only caller context with
 
 When several variants of the same rule match a node:
 
-1. **Specificity wins**: the variant with the highest **effective
-   specificity** — `2 * selectorConditions + (when != null ? 1 : 0)` —
-   is chosen. So more selector conditions win outright (CSS-like), and
-   a `when` breaks ties among variants with the same condition count
-   (a `when`-variant beats the otherwise-identical one, including the
-   base). Base variant has specificity 0. For books without `when` this
-   is exactly the old condition-count order (§13.8).
+1. **Rank wins**: the variant with the highest rank is chosen. Ranks
+   compare the selector-condition count (specificity), then `priority`
+   (§13.12), then `when` presence. So more selector conditions win
+   outright (CSS-like), a higher `priority` wins among equal counts, and
+   a `when` breaks the remaining ties (a `when`-variant beats the
+   otherwise-identical one, including the base). Base variant has
+   specificity 0. For books without `when` and `priority` this is
+   exactly the old condition-count order (§13.8).
 2. **Ties are an error**: if two or more variants match at that same
-   highest specificity, resolution fails with an
-   `AmbiguousVariantException` naming the rule, node, specificity, and
-   the tied variants. The resolver never guesses by order — selectors
-   must be specific enough that exactly one wins. (Supersedes the
-   original "later wins" tie-break of D2; see §13.7.)
+   highest rank, resolution fails with an
+   `AmbiguousVariantException` naming the rule, node, specificity,
+   priority (when not 0), and the tied variants. The resolver never
+   guesses by order — selectors must be specific enough, or one variant
+   must have a higher `priority`, so that exactly one wins. (Supersedes
+   the original "later wins" tie-break of D2; see §13.7.)
 
 If **no** variant matches (all variants carry selectors, none applies),
 resolution fails with a diagnostic listing the rule, node path, and the
@@ -304,7 +307,7 @@ alternatives.
 // Data model (all JSON round-trip capable)
 class RuleBook {
   factory RuleBook.fromJson(Json json);
-  factory RuleBook.merge(Iterable<RuleBook> booksInAscendingPriority);
+  factory RuleBook.merge(Iterable<RuleBook> books);
   Rule? ruleForKey(String key);        // 'borderWidth'
   Json toJson();
 }
@@ -373,9 +376,9 @@ Notes:
   knowledge. Result writes mutate the working copy's data containers
   directly, which also covers references inside lists (where
   path-based `set` has no index syntax).
-- `RuleBook.merge` takes books in ascending priority; a later book
-  overrides an earlier one only with a more specific variant — a
-  same-specificity tie is an error, not resolved by order (§4.4/§13.7).
+- `RuleBook.merge` concatenates books; order never decides between
+  variants — a later book overrides the same case through a higher
+  `priority`, and a same-rank tie is an error (§4.4/§13.7/§13.12).
 - `resolveRule` exists for tooling and tests (evaluate one rule at one
   node without a tree sweep).
 
@@ -440,7 +443,7 @@ this lives in this repository:
   the tree untouched. Feasible because resolution only ever changes
   node data, never structure.
 - **Growth instructions.** A rule may return structured JSON (e.g.
-  `{"add": "innerDrawer", "count": 2}`). A consumer step interprets
+  `{"add": "tab", "count": 2}`). A consumer step interprets
   such values, grows the tree, and re-runs `resolve()` for the new
   nodes. The resolver's idempotency and re-runnability are the enabling
   contract; the instruction vocabulary is consumer-defined (§11.5).
@@ -453,7 +456,7 @@ this lives in this repository:
   only replaces values that already exist. Whether the resolver should
   additionally route writes through `Tree.set` to re-enforce subclass
   gates on JSON-imported trees is open (§11.6).
-- **Selector vocabulary.** Selectors like `manufacturer#id` only work
+- **Selector vocabulary.** Selectors like `theme#id` only work
   if the consumer's trees reliably contain those nodes/keys — that is
   exactly the already-completed "standardized tree" step of the
   planning, and it remains a consumer contract.
@@ -502,7 +505,7 @@ depends on both.
    discipline (`400.0`)? v1: strict.
 4. **Custom CEL functions.** `min`/`max`/`round` etc. are not in the
    standard library and `cel`-dart has no registration hook yet.
-   Options: upstream contribution, vendored fork, or pre-computed
+   Options: upstream contribution, a local fork, or pre-computed
    inputs. Also note the single-maintainer risk of `cel`-dart — the
    `CompiledExpression` wrapper is the mitigation boundary.
 5. **Growth-instruction envelope.** Should this package standardize a
@@ -514,8 +517,8 @@ depends on both.
    an optional post-write validation hook.
 7. **Selector expressiveness.** _Resolved (2026-07-21) — implemented as
    the optional `when` CEL predicate on a variant; see §13.8._
-   Equality-only selectors covered the planned dimensions (vendor,
-   catalog, item type, …) but not ranges (dates!). The `when` field
+   Equality-only selectors covered the planned dimensions (theme,
+   platform, item type, …) but not ranges (dates!). The `when` field
    holds a CEL predicate alongside the equality map, giving ranges,
    comparisons, and OR (`a || b`).
 8. **Result typing.** Optional `resultType` field per rule for
@@ -527,10 +530,11 @@ depends on both.
    `(Tree<T>, ResolutionReport)`; `resolve()` is unchanged and pays
    nothing (capture is a null-gated recorder). Minimal by default
    (location, kind, rule key, variant index, value); `rich: true` adds
-   the winning selector, its `when` predicate, bound inputs, expression
-   source, and alias chain. See `lib/src/resolution_report.dart`.
+   the winning selector, its `when` predicate and priority (§13.12),
+   bound inputs, expression source, and alias chain. See
+   `lib/src/resolution_report.dart`.
 10. **Namespacing.** Rule keys are flat camelCase. If rule books grow
-    large, dotted namespaces (`§geometry.panelWidth`) may be worth the
+    large, dotted namespaces (`§layout.cardWidth`) may be worth the
     added key-pattern complexity.
 11. **Optional rules.** An `optional: true` variant-list flag making
     "no variant matched" resolve to `null`/removal instead of an
@@ -580,8 +584,9 @@ depends on both.
 | D13 | Same-specificity ties among matching variants are an error (`AmbiguousVariantException`), never resolved by order — supersedes D2's later-wins tie-break. | Team decision, 2026-07-21 |
 | D14 | Optional `when` CEL predicate per variant (bool); effective specificity `2 * conditions + (when ? 1 : 0)`; shares the variant's inputs; resolves §11.7. | Team decision, 2026-07-21 |
 | D15 | A variant carries exactly one of `expression` or a literal `value` (marker-free JSON data); a rule book can also be applied push-style — `Resolver.annotate` / `annotateNode` annotate every node with each rule's winning variant, on resolved trees only. | Feature request (skill/term books), 2026-09-29 |
-| D16 | Rules can read read-only caller data that is not in the tree: `Resolver(context: …)` plus the `{"context": "a/b"}` input form. Out-of-band like the rule book, never modified, bound as copies; selectors stay tree-only (§13.10). | Feature request (CAD pipeline), 2026-10-02 |
-| D17 | `resolve` / `resolveVerbose` / `resolveAtomic` accept a `where` marker filter for staged resolution; selected markers pull in the unselected markers they wait for. `resolveAtomic` writes back only nodes whose data changed (§13.11). | Feature request (CAD pipeline), 2026-10-02 |
+| D16 | Rules can read read-only caller data that is not in the tree: `Resolver(context: …)` plus the `{"context": "a/b"}` input form. Out-of-band like the rule book, never modified, bound as copies; selectors stay tree-only (§13.10). | Feature request (consumer pipeline), 2026-10-02 |
+| D17 | `resolve` / `resolveVerbose` / `resolveAtomic` accept a `where` marker filter for staged resolution; selected markers pull in the unselected markers they wait for. `resolveAtomic` writes back only nodes whose data changed (§13.11). | Feature request (consumer pipeline), 2026-10-02 |
+| D18 | Optional variant `priority` (integer ≥ 0, default 0). Variants rank by selector conditions, then priority, then `when`; ties stay an error (D13). Lets layered books override the same case without order-based tie-breaking (§13.12). | Feature request (layered rule books), 2026-10-27 |
 
 ---
 
@@ -928,18 +933,17 @@ push shape is different and unmeasured). Profile before optimizing.
 
 ### 13.10 Feature: read-only caller context (2026-10-02)
 
-Rules sometimes need data that is **not in the tree** — a CAD pipeline's
-cabinet config such as `{"dimensions": {"basicShape": {"dimensions":
-{"h": 2000}}}}`. It is supplied once, out-of-band, exactly like the
-rule book:
+Rules sometimes need data that is **not in the tree** — a pipeline's
+layout config such as `{"layout": {"viewport": {"size": {"h": 2000}}}}`.
+It is supplied once, out-of-band, exactly like the rule book:
 
 ```dart
-Resolver(ruleBook: book, context: {'dimensions': {/* … */}});
+Resolver(ruleBook: book, context: {'layout': {/* … */}});
 ```
 
 ```jsonc
 "inputs": {
-  "h": { "context": "dimensions/basicShape/dimensions/h", "default": 1800 }
+  "h": { "context": "layout/viewport/size/h", "default": 1800 }
 }
 ```
 
@@ -1035,7 +1039,7 @@ behavior.
   progress for that round. Errors of selected and pulled-in markers are
   exactly those of a full resolve.
 - **Why the top-level key.** It is the unit a staged pipeline can name
-  (`front`, `shelves`, `cfg`) without knowing the rule layout inside it,
+  (`header`, `items`, `cfg`) without knowing the rule layout inside it,
   and it makes selection coherent: every marker below one key of one node
   shares one verdict, so a selected write never lands inside a dormant
   marker, and a blocker can only mix verdicts at the node-wide `'/n#'`
@@ -1067,3 +1071,90 @@ resolution, which changes few nodes per stage.
 - Equality treats `1` and `1.0` as equal, which cannot hide a change:
   every resolution replaces a marker *map* (or removes a key), which is
   never equal to its replacement.
+
+### 13.12 Feature: variant priority (2026-10-27)
+
+A variant may carry an optional `priority`, an integer ≥ 0
+(default 0). It exists for layered rule books — a shared default book,
+a team book above it, a project book above that — where a higher layer
+must override a lower one for the same case.
+
+- **The rank.** `Rule.select` ranks the applying variants by three
+  values, compared in this order, highest first: the number of selector
+  conditions, `priority`, and whether the variant has a `when`. The
+  former effective specificity `2 * conditions + (when ? 1 : 0)` is the
+  special case with every priority at 0. The tier-by-tier walk of §13.8
+  is unchanged: a dominated tier's `when` is never evaluated, and a
+  blocked variant in a tier that can still win defers selection.
+- **Why between conditions and `when`.** A more specific case (more
+  conditions) wins whatever its layer, so a variant written for a
+  narrower case is never hidden by a broader one. But for the same case
+  a higher layer must win even when it has no `when` and the lower
+  layer narrows with one: one value for everything in the higher layer
+  replaces all the lower layer's variants of that case. Priority after
+  `when` would let a lower layer's `when` beat it.
+- **Not merge order.** D13 stays: order never decides a tie, because
+  silent order-based tie-breaking hides authoring mistakes. Priority is
+  explicit data in the book, visible in its JSON, its lint and its
+  error messages.
+- **Ties still error.** Two applying variants equal in conditions,
+  priority and `when` presence are an `AmbiguousVariantException`. It
+  and `SelectAmbiguous` carry the shared `priority`; the message names
+  it only when it is not 0. `RuleBook.lint()` flags identical selectors
+  only at the same priority.
+- **Backward compatible.** With every priority at 0 the ranking is
+  exactly the old one. Priority 0 is omitted from `RuleVariant.toJson`,
+  from error messages, and from `ProvenanceEntry.toJson` / `toString`
+  (in a rich report the `priority` field itself is 0), so existing
+  books, results, messages and goldens do not change.
+- **Authoring contract.** Give every variant of a layer the same
+  priority, and use the same selector keys for the same case across
+  layers: a lower layer's variant with more conditions still wins.
+- **Scoping stays with the caller.** Which books apply to a tree is
+  decided by whoever merges them (`RuleBook.merge`). Selectors stay
+  tree-only (§13.10); a book is not tied to a part of the tree by the
+  engine.
+
+### 13.13 cel 0.6.0 (2026-10-27)
+
+Since 2.0.0 the package depends on `cel` ^0.6.0, but the conformance
+fixtures, the error mapping and the notes above were written for
+0.5.4+1. What changed in the engine, and what `CompiledExpression` does
+about it:
+
+- **A missing map key is an error** (`no_such_field`), for `m.k` and
+  `m['k']` alike; 0.5.4+1 read it as null. A key holding `null` still
+  reads as null. Authors guard with `'k' in m ? m.k : fallback` (pinned
+  by a fixture).
+- **Failed member reads lost their message.** 0.5.4+1 turned every
+  failed `.field` read into the "could not find attribute" error of an
+  unknown variable, and the wrapper told the two apart by the input
+  names. 0.6.0 throws the read's own error instead (a `StateError` for a
+  missing key or null, a `NoSuchMethodError` on a scalar, a `TypeError`
+  on a list or string). Those errors name the failing key, except the
+  `TypeError`, but never the input. `compile` now collects the member
+  chains of the AST (`m.a.b` → `m`, `a`, `b`). On an evaluation error,
+  `_conciseEngineError` reads the key from the engine's text and names
+  the inputs whose chain, walked through the bound inputs, first breaks
+  at that key (`Failed to read a member of input "m"`), followed by the
+  engine's text. A chain that breaks at a different key, or not at all,
+  is never named. Only a chain that breaks at the same key as the failed
+  read is named with it, even when its branch was skipped — the engine
+  text cannot tell them apart (`"n" or "m"`). An error without a key (a
+  read on a list, an index read `m['k']`, any other error) names nobody
+  and shows the engine's text only. The key of a read on a scalar comes
+  from the `NoSuchMethodError` text, which carries it on the VM and on
+  Wasm but not on dart2js; there the input is not named.
+- **Unknown variables** still give the attribute error (without the
+  activation since 0.5.5) and keep their message.
+- **Bytes literals are rejected** when the program is planned; they
+  used to evaluate as integer lists. The note on plan errors is now
+  added only when the expression reads a field of a computed value
+  (`m[0].key`, `(c ? m : n).key`, `{'a': 1}.a`) — only identifier
+  chains like `m.a.b` support field reads; `["key"]` works on any value.
+- **Unchanged:** the parser still prints to stderr (landmine 1) and
+  still swallows syntax errors into `'<<error>>'` literals.
+- **Not taken up:** 0.5.6 added `size()` and converts more list shapes,
+  but `compile` still rejects `size` and the JSON type adapter stays;
+  neither was re-evaluated here. 0.5.5 lets `&&` / `||` absorb an error
+  from the operand that does not decide the result.

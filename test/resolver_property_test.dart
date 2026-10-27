@@ -4,11 +4,8 @@
 // Use of this source code is governed by terms that can be
 // found in the LICENSE file in the root of this package.
 
-// Property-style harness for the resolver's core claims: resolution
-// leaves no markers behind, is idempotent, keeps the original intact
-// in copy mode, and its outcome does not depend on the order in
-// which references appear in node data — nor on resolving in stages
-// with a `where` filter.
+// Property tests: resolution removes all markers, is idempotent, keeps the
+// original in copy mode and does not depend on data order or stages.
 
 import 'dart:math';
 
@@ -20,8 +17,7 @@ import 'package:test/test.dart';
 void main() {
   final random = Random(20260708);
 
-  /// A random rule book. Aliases only point to higher rule indices,
-  /// so books are cycle-free by construction.
+  /// A random, cycle-free rule book.
   Json randomBook(int ruleCount) {
     final book = <String, dynamic>{};
     for (var i = 0; i < ruleCount; i++) {
@@ -97,8 +93,7 @@ void main() {
     ],
   );
 
-  /// Rebuilds [tree] with reversed data-entry order everywhere —
-  /// same content, different worklist order.
+  /// Rebuilds [tree] with all data entries in reverse order.
   Tree<Json> reversedClone(Tree<Json> tree) => Tree<Json>(
     key: tree.key,
     data: Map.fromEntries(tree.data.entries.toList().reversed),
@@ -124,8 +119,7 @@ void main() {
         final before = tree.toJson();
         final clue = 'iteration $iteration';
 
-        // 1. Resolution succeeds (books are cycle-free with base
-        //    variants and defaulted inputs) and removes every marker.
+        // 1. Resolution succeeds and removes every marker.
         final resolved = resolver.resolve(tree);
         expect(treeIsMarkerFree(resolved), isTrue, reason: clue);
 
@@ -140,8 +134,7 @@ void main() {
           reason: clue,
         );
 
-        // 4. Order-independent: reversed data-entry order resolves
-        //    to the same values.
+        // 4. Reversed data order resolves to the same values.
         final reversed = resolver.resolve(reversedClone(tree));
         expect(
           deeplEquals(reversed.toJson(), resolved.toJson()),

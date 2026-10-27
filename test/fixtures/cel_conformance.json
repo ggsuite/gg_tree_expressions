@@ -152,6 +152,12 @@
       "expression": "m[\"gap\"] == null",
       "inputs": { "m": { "gap": null } },
       "expected": true
+    },
+    {
+      "expression": "'k' in m ? m.k : 0",
+      "inputs": { "m": {} },
+      "expected": 0,
+      "note": "guards a missing key, which is an error"
     }
   ],
   "quirks": [
@@ -173,12 +179,6 @@
       "inputs": {},
       "expected": false,
       "note": "list equality is identity, not structural"
-    },
-    {
-      "expression": "b\"ab\" + b\"cd\"",
-      "inputs": {},
-      "expected": [97, 98, 99, 100],
-      "note": "bytes literals behave as integer lists"
     }
   ],
   "evaluateErrors": [
@@ -218,6 +218,36 @@
       "inputs": { "m": { "a": 5 } },
       "errorContains": "Failed to read a member of input \"m\"",
       "note": "member access on a scalar is not an unknown variable"
+    },
+    {
+      "expression": "m.a.b",
+      "inputs": { "m": { "a": null } },
+      "errorContains": "Failed to read a member of input \"m\"",
+      "note": "member access on null"
+    },
+    {
+      "expression": "l.x",
+      "inputs": { "l": [1] },
+      "errorContains": "Evaluation of expression \"l.x\" failed",
+      "note": "member access on a list; the engine's error has no key"
+    },
+    {
+      "expression": "c ? m.a : n.b",
+      "inputs": { "c": true, "m": {}, "n": {} },
+      "errorContains": "Failed to read a member of input \"m\" —",
+      "note": "only the read that failed is named"
+    },
+    {
+      "expression": "m.b",
+      "inputs": { "m": { "a": 1 } },
+      "errorContains": "Failed to read a member of input \"m\"",
+      "note": "a missing key is an error, not null (cel 0.6.0)"
+    },
+    {
+      "expression": "m['b']",
+      "inputs": { "m": { "a": 1 } },
+      "errorContains": "no_such_field",
+      "note": "also when indexed; 'b' in m ? m.b : x guards it"
     }
   ],
   "compileErrors": [
@@ -257,6 +287,20 @@
       "expression": "rows[0].w",
       "errorContains": "Unsupported expression",
       "note": "field access after an index fails at plan time"
+    },
+    {
+      "expression": "(c ? m : n).a",
+      "errorContains": "field access on a computed value is not supported",
+      "note": "only identifier chains like m.a.b support field reads"
+    },
+    {
+      "expression": "{'a': 1}.a",
+      "errorContains": "field access on a computed value is not supported"
+    },
+    {
+      "expression": "b\"ab\" + b\"cd\"",
+      "errorContains": "Bytes literals are not supported",
+      "note": "bytes literals are rejected at plan time (cel 0.6.0)"
     },
     { "expression": "@#!", "errorContains": "Syntax error" },
     { "expression": "1 +", "errorContains": "line 1:3" },

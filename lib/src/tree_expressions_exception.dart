@@ -5,14 +5,6 @@
 // found in the LICENSE file in the root of this package.
 
 /// Base of all exceptions thrown by gg_tree_expressions.
-///
-/// Carries one logical line per list element. The first line states
-/// the problem, usually quoting the offending rule key, query, or
-/// node path. Following lines add remediation hints or available
-/// alternatives, indented with `'  - '`.
-///
-/// The hierarchy is sealed — consumers can match exhaustively or
-/// catch individual categories instead of parsing messages.
 sealed class TreeExpressionsException implements Exception {
   /// Creates an exception from [messages], one logical line each.
   TreeExpressionsException(this.messages);
@@ -28,9 +20,8 @@ sealed class TreeExpressionsException implements Exception {
 }
 
 // .............................................................................
-/// Invalid rule book, rule, variant, selector, input, or inline
-/// expression definitions — authoring errors caught at load time or
-/// when an inline map is first processed.
+/// An invalid rule book, rule, variant, selector, input or inline
+/// expression.
 class SchemaException extends TreeExpressionsException {
   /// Creates the exception.
   SchemaException(super.messages);
@@ -47,8 +38,7 @@ class ExpressionException extends TreeExpressionsException {
 }
 
 // .............................................................................
-/// A tree query failed at resolution time (invalid syntax or a data
-/// path traversing an incompatible shape).
+/// A tree query is invalid or cannot be read.
 class QueryException extends TreeExpressionsException {
   /// Creates the exception for [query] at [nodePath].
   QueryException(super.messages, {required this.query, required this.nodePath});
@@ -120,9 +110,7 @@ class NoVariantException extends TreeExpressionsException {
 }
 
 // .............................................................................
-/// Two or more variants of a rule match a node at the same specificity,
-/// so the winner is ambiguous. Ties are never broken silently — the
-/// selectors must be specific enough that exactly one variant wins.
+/// Two or more variants of a rule match a node at the same rank.
 class AmbiguousVariantException extends TreeExpressionsException {
   /// Creates the exception.
   AmbiguousVariantException(
@@ -131,6 +119,7 @@ class AmbiguousVariantException extends TreeExpressionsException {
     required this.location,
     required this.specificity,
     required this.variantIndices,
+    this.priority = 0,
   });
 
   /// The rule with the tied variants.
@@ -142,13 +131,15 @@ class AmbiguousVariantException extends TreeExpressionsException {
   /// The shared specificity of the tied variants.
   final int specificity;
 
+  /// The shared priority of the tied variants.
+  final int priority;
+
   /// The indices of the tied variants, in rule order.
   final List<int> variantIndices;
 }
 
 // .............................................................................
-/// An input query (or context path) resolved to nothing and declared no
-/// default.
+/// An input without a default resolved to nothing.
 class MissingInputException extends TreeExpressionsException {
   /// Creates the exception.
   MissingInputException(
@@ -160,14 +151,12 @@ class MissingInputException extends TreeExpressionsException {
   /// The name of the unresolvable input.
   final String inputName;
 
-  /// The query — or, for a context input, the context path — that
-  /// resolved to nothing.
+  /// The query or context path that resolved to nothing.
   final String query;
 }
 
 // .............................................................................
-/// A resolution round made no progress while items remain — rules
-/// wait on each other in a cycle or on values that never resolve.
+/// A resolution round made no progress while items remain.
 class StuckException extends TreeExpressionsException {
   /// Creates the exception.
   StuckException(super.messages, {required this.pending});
@@ -177,8 +166,7 @@ class StuckException extends TreeExpressionsException {
 }
 
 // .............................................................................
-/// Other resolution failures: non-root copy mode, uncopyable trees,
-/// result-type violations, and expressions that never settle.
+/// Any other resolution failure, e.g. a result of the wrong type.
 class ResolveException extends TreeExpressionsException {
   /// Creates the exception.
   ResolveException(super.messages);

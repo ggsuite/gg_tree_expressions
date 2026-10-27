@@ -6,9 +6,9 @@
 
 import 'package:gg_json/gg_json.dart';
 
-/// What one rule contributes to one node, see [Resolver.annotate].
+/// What one rule contributes to one node in [Resolver.annotate].
 ///
-/// The [value] is a fresh copy per call: mutating it is safe.
+/// [value] is a fresh copy per call.
 class Annotation {
   /// Creates the annotation of variant [variantIndex] of [ruleKey].
   const Annotation({
@@ -27,7 +27,7 @@ class Annotation {
   /// The key of the rule that annotates the node.
   final String ruleKey;
 
-  /// The index of the winning variant in the merged rule.
+  /// The index of the winning variant.
   final int variantIndex;
 
   /// The literal `value` of the variant, or its evaluated `expression`.

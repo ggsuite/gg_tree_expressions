@@ -10,8 +10,7 @@ import 'package:gg_tree/gg_tree.dart';
 import 'package:gg_tree_expressions/gg_tree_expressions.dart';
 import 'package:test/test.dart';
 
-/// Mimics a consumer's typed tree data: a zero-cost extension type
-/// over `Json`. Guards that `resolveAtomic` works on such trees.
+/// Typed tree data: an extension type over `Json`.
 extension type _JsonNode(Json data) implements Json {}
 
 void main() {
@@ -38,7 +37,7 @@ void main() {
 
   Json ref(String key) => {'§': key};
 
-  /// The architecture doc §4 example.
+  /// A rule book with a base variant and two overrides.
   final borderBook = {
     'borderWidth': [
       {'expression': '1.0'},
@@ -84,7 +83,7 @@ void main() {
       });
 
       test('should compile only the expressions that exist', () {
-        // A value that merely looks like broken CEL is data, not source.
+        // A value that looks like broken CEL is data.
         final cache = <String, CompiledExpression>{};
         Resolver(
           ruleBook: RuleBook.fromJson({
@@ -118,13 +117,12 @@ void main() {
           ],
         });
 
-        // First resolver populates the shared cache.
+        // The first resolver fills the shared cache.
         Resolver(ruleBook: book, expressionCache: cache);
         expect(cache.keys, contains('1.0 + 2.0'));
         final compiled = cache['1.0 + 2.0'];
 
-        // A second resolver reuses the same compiled expression and
-        // still resolves correctly.
+        // A second resolver reuses the compiled expression.
         final r2 = Resolver(ruleBook: book, expressionCache: cache);
         expect(identical(cache['1.0 + 2.0'], compiled), isTrue);
         final resolved = r2.resolve(node('n', {'v': ref('w')}), inPlace: true);
@@ -165,9 +163,30 @@ void main() {
         expect(e.variantIndex, 2);
         expect(e.value, 3.0);
         expect(e.selector, {'theme#id': 'dark', '#platform': 'mobile'});
+        expect(e.priority, 0);
         expect(e.inputs, {'screenWidth': 380.0});
         expect(e.expression, 'screenWidth < 400.0 ? 3.0 : 2.0');
         expect(e.aliasChain, ['borderWidth']);
+      });
+
+      test('should report the winning priority in rich mode only', () {
+        final book = {
+          'w': [
+            {'expression': '1.0'},
+            {'priority': 2, 'expression': '2.0'},
+          ],
+        };
+        Tree<Json> tree() => node('root', {'v': ref('w')});
+
+        final (_, rich) = resolver(book).resolveVerbose(tree(), rich: true);
+        final e = rich.entries.single;
+        expect(e.variantIndex, 1);
+        expect(e.priority, 2);
+        expect(e.toJson()['priority'], 2);
+        expect(e.toString(), contains('priority 2'));
+
+        final (_, minimal) = resolver(book).resolveVerbose(tree());
+        expect(minimal.entries.single.priority, isNull);
       });
 
       test('should report inline provenance (minimal and rich)', () {
@@ -270,7 +289,7 @@ void main() {
           () => resolver(book).resolveAtomic(root),
           throwsA(isA<UnknownRuleException>()),
         );
-        // Nothing was written back: both references are still present.
+        // Nothing was written back.
         expect(root.getOrNull<Json>('./#good'), {'§': 'w'});
         expect(root.getOrNull<Json>('./#bad'), {'§': 'missing'});
       });
@@ -305,7 +324,6 @@ void main() {
       });
 
       test('should work on an extension-type-over-Json tree', () {
-        // A consumer's typed-tree shape: Tree<extension type over Json>.
         final tree = Tree<_JsonNode>(
           key: 'root',
           data: _JsonNode(<String, dynamic>{'v': ref('w')}),
@@ -331,8 +349,7 @@ void main() {
 
         resolver(book).resolveAtomic(root);
 
-        // The untouched node keeps its map and everything nested in it,
-        // in the original key order.
+        // The untouched node keeps its map and its key order.
         expect(identical(child.data, childData), isTrue);
         expect(identical(child.data['nested'], nested), isTrue);
         expect(identical(nested['list'], list), isTrue);
@@ -379,7 +396,7 @@ void main() {
         final dialog = resolved.childByPath('dialog');
         expect(dialog.getOrNull<double>('./#borderWidth'), 3.0);
 
-        // Children read the resolved value via plain inheritance.
+        // Children inherit the resolved value.
         final okButton = resolved.childByPath('dialog/okButton');
         expect(okButton.getOrNull<double>('#borderWidth'), 3.0);
       });
@@ -424,8 +441,7 @@ void main() {
       });
 
       test('should treat §-strings as plain data everywhere', () {
-        // Strings are never references: values, selector literals,
-        // and inputs all see them as ordinary data.
+        // Strings are never references.
         final tree = node('root', {
           'law': '§ 5 Abs. 2',
           'label': 'note',
@@ -474,8 +490,7 @@ void main() {
       });
 
       test('should defer until input values are resolved', () {
-        // The dependents come first in data order, so they are
-        // attempted (and deferred) before '#w' resolves.
+        // The dependents come first and wait for '#w'.
         final tree = node('root', {
           'doubled': ref('double'),
           'twice': {
@@ -708,8 +723,43 @@ void main() {
         expect(ambiguous.ruleKey, 'w');
         expect(ambiguous.location, '/#v');
         expect(ambiguous.specificity, 1);
+        expect(ambiguous.priority, 0);
         expect(ambiguous.variantIndices, [0, 1]);
-        expect(ambiguous.message, contains('the winner is ambiguous'));
+        expect(
+          ambiguous.message,
+          contains('same specificity (1) — the winner is ambiguous'),
+        );
+      });
+
+      test('should name a shared priority in the ambiguity message', () {
+        final e = catchException(
+          () => resolver({
+            'w': [
+              {'priority': 2, 'expression': '0.0'},
+              {
+                'selector': {'#a': 1},
+                'priority': 1,
+                'expression': '1.0',
+              },
+              {
+                'selector': {'#b': 2},
+                'priority': 1,
+                'expression': '2.0',
+              },
+            ],
+          }).resolve(node('root', {'a': 1, 'b': 2, 'v': ref('w')})),
+        );
+        final ambiguous = e! as AmbiguousVariantException;
+        expect(ambiguous.specificity, 1);
+        expect(ambiguous.priority, 1);
+        expect(ambiguous.variantIndices, [1, 2]);
+        expect(
+          ambiguous.message,
+          contains(
+            '2 variants of rule "w" match at "/#v" with the same '
+            'specificity (1) and priority (1) — the winner is ambiguous:',
+          ),
+        );
       });
 
       test('should remove optional references that match nothing', () {
@@ -997,8 +1047,7 @@ void main() {
       });
 
       test('should wrap a when evaluation error', () {
-        // Compiles (valid syntax) but throws at eval: `ghost` is not
-        // declared in inputs.
+        // `ghost` is not declared in inputs.
         final e = catchException(
           () => resolver({
             'w': [
@@ -1060,10 +1109,7 @@ void main() {
       });
 
       test('should ignore a dominated when-variant whose when errors', () {
-        // Variant 0 (2 conditions, effSpec 4) outranks variant 1
-        // (1 condition + when, effSpec 3). Variant 1's `when` is broken
-        // (non-bool, and a missing input), but it is dominated and must
-        // never be evaluated — resolution takes variant 0, no error.
+        // Variant 0 outranks variant 1, whose broken `when` never runs.
         final resolved = resolver({
           'w': [
             {
@@ -1091,16 +1137,16 @@ void main() {
             },
           },
           {
-            'selector': {'#kind': 'door'},
-            'value': ['door', 'docs'],
+            'selector': {'#kind': 'dialog'},
+            'value': ['dialog', 'docs'],
           },
         ],
       };
 
       test('should write the literal value of the winning variant', () {
         final resolved = resolver(docBook())
-            .resolve(node('root', {'kind': 'door', 'x': ref('doc')}));
-        expect(resolved.data['x'], ['door', 'docs']);
+            .resolve(node('root', {'kind': 'dialog', 'x': ref('doc')}));
+        expect(resolved.data['x'], ['dialog', 'docs']);
 
         final base = resolver(docBook())
             .resolve(node('root', {'x': ref('doc')}));
@@ -1255,21 +1301,21 @@ void main() {
 
       test('should report value provenance without an expression', () {
         final (_, minimal) = resolver(docBook())
-            .resolveVerbose(node('root', {'kind': 'door', 'x': ref('doc')}));
+            .resolveVerbose(node('root', {'kind': 'dialog', 'x': ref('doc')}));
         final eMin = minimal.entries.single;
         expect(eMin.kind, ProvenanceKind.rule);
         expect(eMin.ruleKey, 'doc');
         expect(eMin.variantIndex, 1);
-        expect(eMin.value, ['door', 'docs']);
+        expect(eMin.value, ['dialog', 'docs']);
         expect(eMin.expression, isNull);
 
         final (_, rich) = resolver(docBook()).resolveVerbose(
-          node('root', {'kind': 'door', 'x': ref('doc')}),
+          node('root', {'kind': 'dialog', 'x': ref('doc')}),
           rich: true,
         );
         final e = rich.entries.single;
-        expect(e.value, ['door', 'docs']);
-        expect(e.selector, {'#kind': 'door'});
+        expect(e.value, ['dialog', 'docs']);
+        expect(e.selector, {'#kind': 'dialog'});
         expect(e.expression, isNull);
         expect(e.inputs, isEmpty);
         expect(e.aliasChain, ['doc']);
@@ -1280,9 +1326,9 @@ void main() {
 
     group('resolve() — context inputs', () {
       final context = <String, dynamic>{
-        'dimensions': {
-          'basicShape': {
-            'dimensions': {'h': 2000, 'w': 800},
+        'layout': {
+          'viewport': {
+            'size': {'h': 2000, 'w': 800},
           },
         },
         'sizes': [100, 200],
@@ -1295,7 +1341,7 @@ void main() {
         'doubled': [
           {
             'inputs': {
-              'h': {'context': 'dimensions/basicShape/dimensions/h'},
+              'h': {'context': 'layout/viewport/size/h'},
             },
             'expression': 'h * 2',
           },
@@ -1315,7 +1361,7 @@ void main() {
           'sum': [
             {
               'inputs': {
-                'w': {'context': 'dimensions.basicShape.dimensions.w'},
+                'w': {'context': 'layout.viewport.size.w'},
                 's': {'context': 'sizes[1]'},
               },
               'expression': 'w + s',
@@ -1327,27 +1373,27 @@ void main() {
 
       test('should feed a context value to a when predicate', () {
         Json book() => {
-          'shelf': [
+          'margin': [
             {'expression': '560.0'},
             {
               'when': 'h < 2200',
               'inputs': {
-                'h': {'context': 'dimensions/basicShape/dimensions/h'},
+                'h': {'context': 'layout/viewport/size/h'},
               },
               'expression': '320.0',
             },
           ],
         };
-        final tree = node('root', {'v': ref('shelf')});
+        final tree = node('root', {'v': ref('margin')});
         expect(
           withContext(book(), context).resolve(tree).getOrNull<double>('./#v'),
           320.0,
         );
 
         final tall = <String, dynamic>{
-          'dimensions': {
-            'basicShape': {
-              'dimensions': {'h': 2500},
+          'layout': {
+            'viewport': {
+              'size': {'h': 2500},
             },
           },
         };
@@ -1362,7 +1408,7 @@ void main() {
           'x': {
             '§expression': 'h + 1',
             '§inputs': {
-              'h': {'context': 'dimensions/basicShape/dimensions/h'},
+              'h': {'context': 'layout/viewport/size/h'},
             },
           },
         });
@@ -1389,7 +1435,7 @@ void main() {
           'v': [
             {
               'inputs': {
-                'd': {'context': 'dimensions/nope', 'default': 7},
+                'd': {'context': 'layout/nope', 'default': 7},
               },
               'expression': 'd',
             },
@@ -1406,10 +1452,7 @@ void main() {
           'v': [
             {
               'inputs': {
-                'd': {
-                  'context': 'dimensions/basicShape/dimensions/h/deeper',
-                  'default': 8,
-                },
+                'd': {'context': 'layout/viewport/size/h/deeper', 'default': 8},
               },
               'expression': 'd',
             },
@@ -1452,14 +1495,14 @@ void main() {
         expect(
           e.message,
           contains(
-            'the context path "dimensions/basicShape/dimensions/h" '
+            'the context path "layout/viewport/size/h" '
             'resolved to nothing',
           ),
         );
         expect(e.message, isNot(contains('without a context')));
         final missing = e as MissingInputException;
         expect(missing.inputName, 'h');
-        expect(missing.query, 'dimensions/basicShape/dimensions/h');
+        expect(missing.query, 'layout/viewport/size/h');
       });
 
       test('should say so when the resolver has no context at all', () {
@@ -1474,8 +1517,7 @@ void main() {
       });
 
       test('should keep the context separate from the tree data', () {
-        // The tree key `h` is an unresolved marker; the context key `h`
-        // is a different namespace and is read without deferral.
+        // The context key `h` is read although the tree's `h` is a marker.
         final resolved = withContext(
           {
             'fromContext': [
@@ -1569,7 +1611,7 @@ void main() {
           'height': [
             {
               'inputs': {
-                'h': {'context': 'dimensions/basicShape/dimensions/h'},
+                'h': {'context': 'layout/viewport/size/h'},
               },
               'expression': 'h',
             },
@@ -1645,7 +1687,7 @@ void main() {
           'a': 1,
           'b': {'§': 'one'},
         });
-        // Copy mode: the original is untouched as usual.
+        // Copy mode leaves the original untouched.
         expect(tree.data['a'], {'§': 'one'});
       });
 
@@ -1675,7 +1717,7 @@ void main() {
             return true;
           },
         );
-        // One call per marker, with the top-level key — not the path.
+        // One call per marker, with its top-level key.
         expect(calls, ['/|cfg', '/|cfg', '/child|x']);
       });
 
@@ -1688,7 +1730,7 @@ void main() {
       });
 
       test('should resolve nothing when nothing is selected', () {
-        // Even markers that would fail: they are never looked at.
+        // Unselected markers that would fail are never read.
         final tree = node('root', {
           'a': ref('one'),
           'bad': ref('noSuchRule'),
@@ -1844,8 +1886,7 @@ void main() {
         });
 
         test('should pull in nested markers below the blocker', () {
-          // The input reads `#cfg`, which contains markers at cfg/a and
-          // cfg/xs[0]; a lookalike sibling must stay.
+          // `#cfg` holds markers at cfg/a and cfg/xs[0]; the lookalike stays.
           final tree = node('root', {
             'total': ref('sum'),
             'cfg': {
@@ -1934,8 +1975,7 @@ void main() {
         });
 
         test('should pull in a whole node when its data is read', () {
-          // `../#` reads the parent's entire data map: every marker
-          // there blocks the read, none elsewhere does.
+          // `../#` reads the parent's whole data; only its markers block.
           final sibling = node('sibling', {'s': ref('one')});
           final root = node(
             'root',
@@ -1962,8 +2002,7 @@ void main() {
         });
 
         test('should not confuse nodes that share a path prefix', () {
-          // Blocker is `/a#w`; the dormant marker on node `ab` has the
-          // same key but lives elsewhere.
+          // Blocker is `/a#w`; the marker on node `ab` stays dormant.
           final root = node('root', {}, [
             node('a', {'w': ref('one')}),
             node('ab', {'w': ref('one')}),
@@ -2020,8 +2059,7 @@ void main() {
 
       group('discovered markers', () {
         test('should keep markers produced by a selected one selected', () {
-          // `alias` yields another reference at the same location; it
-          // is resolved although `where` was asked only about `a`.
+          // The reference `alias` yields is resolved, too.
           final tree = node('root', {'a': ref('alias'), 'b': ref('one')});
           var calls = 0;
           final resolved =
@@ -2094,8 +2132,7 @@ void main() {
         );
 
         test('should get stuck on a blocker outside a resolved subtree', () {
-          // The dormant-free subtree resolve cannot see the ancestor's
-          // marker, so there is nothing to pull in.
+          // A subtree resolve does not pull in the ancestor's marker.
           final child = node('child', {'v': ref('readLimit')});
           node('root', {'limit': ref('one')}, [child]);
           final e = catchException(
@@ -2287,13 +2324,9 @@ void main() {
       });
     });
 
-    // End-to-end golden: resolving [RuleBook.example] over a
-    // representative tree. Snapshots both the resolved tree and the
-    // rich report, so any change to selection, inputs/defaults, inline
-    // expressions, optional removal, or deferral surfaces as a diff.
+    // Resolves [RuleBook.example]; snapshots the tree and rich report.
     group('example (golden)', () {
-      // `title` sits before `gap` so its inline expression reads an
-      // unresolved reference first and is deferred until `gap` resolves.
+      // `title` comes first and waits for `gap`.
       Tree<Json> exampleTree() => node(
         'app',
         {'platform': 'mobile', 'style': 'plain'},
@@ -2332,11 +2365,9 @@ void main() {
     });
 
     group('when (golden)', () {
-      // One resolve showing the three `when` patterns: a base +
-      // when-override (`shelfCount`), and an OR predicate (`compact`).
-      // Sibling nodes hit different branches.
+      // A base with a `when` override, and an OR predicate.
       Json whenBook() => {
-        'shelfCount': [
+        'columnCount': [
           {'expression': '1'},
           {
             'when': 'h > 2000.0',
@@ -2354,42 +2385,42 @@ void main() {
         ],
       };
 
-      Tree<Json> cabinetTree() => node('app', {}, [
+      Tree<Json> layoutTree() => node('app', {}, [
         node('tall', {
           'height': 2400.0,
           'width': 600.0,
-          'shelves': ref('shelfCount'),
+          'columns': ref('columnCount'),
           'isCompact': ref('compact'),
         }),
         node('short', {
           'height': 700.0,
           'width': 600.0,
-          'shelves': ref('shelfCount'),
+          'columns': ref('columnCount'),
           'isCompact': ref('compact'),
         }),
         node('wide', {
           'height': 1500.0,
           'width': 1400.0,
-          'shelves': ref('shelfCount'),
+          'columns': ref('columnCount'),
           'isCompact': ref('compact'),
         }),
       ]);
 
       test('resolves when-gated variants over a representative tree', () async {
         final resolved = Resolver(ruleBook: RuleBook.fromJson(whenBook()))
-            .resolve(cabinetTree());
+            .resolve(layoutTree());
         await writeGolden('resolved_when_tree.json', resolved.toJson());
 
-        // Rich report now carries the winning variant's `when`.
+        // The rich report carries the winning `when`.
         final (_, report) = Resolver(ruleBook: RuleBook.fromJson(whenBook()))
-            .resolveVerbose(cabinetTree(), rich: true);
+            .resolveVerbose(layoutTree(), rich: true);
         await writeGolden('resolution_report_when.json', report.toJson());
 
         // Spot-check the branches the goldens capture.
         Tree<Json> child(String k) => resolved.childByPath(k);
-        expect(child('tall').get<int>('./#shelves'), 4); // h>2000 override
-        expect(child('short').get<int>('./#shelves'), 1); // base fallback
-        expect(child('wide').get<int>('./#shelves'), 1); // base fallback
+        expect(child('tall').get<int>('./#columns'), 4); // h>2000 override
+        expect(child('short').get<int>('./#columns'), 1); // base fallback
+        expect(child('wide').get<int>('./#columns'), 1); // base fallback
         expect(child('tall').get<bool>('./#isCompact'), isFalse);
         expect(child('short').get<bool>('./#isCompact'), isTrue); // h<800
         expect(child('wide').get<bool>('./#isCompact'), isTrue); // w>1200
@@ -2417,7 +2448,7 @@ void main() {
         ],
         'area': [
           {
-            'selector': {'#kind': 'panel'},
+            'selector': {'#kind': 'pane'},
             'inputs': {'w': './#width', 'h': './#height'},
             'expression': 'w * h',
           },
@@ -2441,7 +2472,7 @@ void main() {
             node('okButton', {'kind': 'button'}),
           ],
         ),
-        node('sidebar', {'kind': 'panel', 'width': 300.0, 'height': 400.0}),
+        node('sidebar', {'kind': 'pane', 'width': 300.0, 'height': 400.0}),
       ]);
 
       Map<String, List<Map<String, dynamic>>> asJson(
@@ -2569,6 +2600,33 @@ void main() {
         expect(ambiguous.location, '/');
         expect(ambiguous.variantIndices, [0, 1]);
         expect(ambiguous.message, contains('the winner is ambiguous'));
+      });
+
+      test('should break a same-case tie by priority', () {
+        final result = resolver({
+          'role': [
+            {'value': 'default'},
+            {'priority': 1, 'value': 'override'},
+            {
+              'selector': {'#kind': 'pane'},
+              'value': 'pane',
+            },
+          ],
+        }).annotate(uiTree());
+        expect(asJson(result), {
+          '/': [
+            {'ruleKey': 'role', 'variantIndex': 1, 'value': 'override'},
+          ],
+          '/dialog': [
+            {'ruleKey': 'role', 'variantIndex': 1, 'value': 'override'},
+          ],
+          '/dialog/okButton': [
+            {'ruleKey': 'role', 'variantIndex': 1, 'value': 'override'},
+          ],
+          '/sidebar': [
+            {'ruleKey': 'role', 'variantIndex': 2, 'value': 'pane'},
+          ],
+        });
       });
 
       test('should validate resultType of value and expression results', () {

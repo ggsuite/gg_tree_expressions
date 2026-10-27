@@ -19,6 +19,15 @@ void main() {
   Object? run(String expression, Json inputs) =>
       CompiledExpression.compile(expression).evaluate(inputs);
 
+  String failure(void Function() call) {
+    try {
+      call();
+    } on ExpressionException catch (e) {
+      return e.message;
+    }
+    fail('expected an ExpressionException');
+  }
+
   group('CompiledExpression', () {
     group('conformance fixtures', () {
       for (final section in ['evaluate', 'quirks']) {
@@ -80,6 +89,23 @@ void main() {
 
       test('should expose the source', () {
         expect(CompiledExpression.compile('1 + 2').source, '1 + 2');
+      });
+
+      test('should note field access on a computed value only', () {
+        String compileError(String source) =>
+            failure(() => CompiledExpression.compile(source));
+
+        const note = 'field access on a computed value is not supported';
+        for (final source in [
+          'rows[0].w',
+          '(c ? m : n).a',
+          '{"a": 1}.a',
+          '[1].a',
+          's.contains("x").y',
+        ]) {
+          expect(compileError(source), contains(note), reason: source);
+        }
+        expect(compileError('[m.a, {"k": b"x"}]'), isNot(contains(note)));
       });
     });
 
@@ -160,6 +186,45 @@ void main() {
         }
         expect(message, contains('Failed to read a member of input "m"'));
         expect(message, isNot(contains('Unknown variable')));
+      });
+
+      test('should name only the input whose member read failed', () {
+        String evaluateError(String source, Json inputs) =>
+            failure(() => run(source, inputs));
+        const blame = 'Failed to read a member of input';
+        final empty = <String, dynamic>{};
+
+        // The read of the taken branch fails, not the other one.
+        expect(
+          evaluateError('c ? m.a : n.b', {'c': true, 'm': empty, 'n': empty}),
+          allOf(contains('$blame "m" — '), isNot(contains('"n"'))),
+        );
+
+        // Errors without a member read name nobody.
+        for (final (source, inputs) in [
+          (
+            'useOverride ? override.width : defaults["width"]',
+            {'useOverride': false, 'override': empty, 'defaults': empty},
+          ),
+          ('flag ? m.x : s + 1', {'flag': false, 'm': empty, 's': 'a'}),
+          ('false ? m.x : 1 / 0', {'m': empty}),
+        ]) {
+          expect(
+            evaluateError(source, inputs),
+            allOf(contains('Evaluation of expression'), isNot(contains(blame))),
+            reason: source,
+          );
+        }
+
+        // Unbound roots are not named; all chains breaking at a key are.
+        expect(
+          evaluateError('false ? x.k : m.k', {'m': empty}),
+          contains('$blame "m" — '),
+        );
+        expect(
+          evaluateError('false ? n.k : m.k', {'m': empty, 'n': empty}),
+          contains('$blame "n" or "m" — '),
+        );
       });
 
       test('should bind deeply nested structures', () {

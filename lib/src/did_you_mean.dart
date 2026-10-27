@@ -8,9 +8,7 @@ import 'dart:math';
 
 /// Returns the [candidates] most similar to [input], best match first.
 ///
-/// Candidates further away than [maxDistance] edits are dropped; at
-/// most [maxSuggestions] are returned. Used to enrich unknown-rule
-/// errors with "did you mean" hints.
+/// Returns at most [maxSuggestions] within [maxDistance] edits.
 List<String> didYouMean(
   String input,
   Iterable<String> candidates, {

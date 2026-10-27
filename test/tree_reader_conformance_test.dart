@@ -4,10 +4,7 @@
 // Use of this source code is governed by terms that can be
 // found in the LICENSE file in the root of this package.
 
-// Property-style conformance harness: readQuery mirrors gg_tree's
-// private search semantics, so this test pins the two against each
-// other over a generated corpus. If a gg_tree upgrade changes the
-// search behavior, this fails before the resolver silently diverges.
+// Pins readQuery against the plain gg_tree read over a generated corpus.
 
 import 'dart:math';
 
@@ -146,8 +143,7 @@ void main() {
               expect(realError, isNull, reason: clue);
               expect(real, isNull, reason: clue);
             case ReadBlocked(:final blocker):
-              // The reported blocker location really holds an
-              // unresolved marker (at it or below it).
+              // The blocker location holds a marker at or below it.
               expect(
                 containsMarker(valueAt(root, blocker)),
                 isTrue,

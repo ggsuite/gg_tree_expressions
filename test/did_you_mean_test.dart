@@ -46,8 +46,7 @@ void main() {
     });
 
     test('should swap rows correctly across multiple iterations', () {
-      // Requires several outer-loop iterations, exercising the
-      // previous/current row swap repeatedly.
+      // Swaps the rows several times.
       expect(levenshtein('flaw', 'lawn'), 2);
       expect(levenshtein('intention', 'execution'), 5);
     });

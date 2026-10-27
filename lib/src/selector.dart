@@ -28,9 +28,7 @@ class MatchFailure extends MatchResult {
   const MatchFailure(this.query, this.expected, this.actual)
     : _reasonOverride = null;
 
-  /// Creates a failure with an explicit [reason] — used when the failure
-  /// is not an equality condition (e.g. a `when` predicate evaluating to
-  /// false).
+  /// Creates a failure with an explicit [reason].
   const MatchFailure.reason(String reason)
     : query = '',
       expected = '',
@@ -56,8 +54,7 @@ class MatchFailure extends MatchResult {
           : 'condition "$query == $expected" failed: found "$actual"');
 }
 
-/// A condition read a still-unresolved value; matching must be
-/// retried after further resolution.
+/// A condition read an unresolved value; matching must be retried.
 class MatchBlocked extends MatchResult {
   /// Creates the result naming the blocking [query] and [blocker].
   const MatchBlocked(this.query, this.blocker);
@@ -70,16 +67,14 @@ class MatchBlocked extends MatchResult {
 }
 
 // .............................................................................
-/// A set of `treeQuery == literal` conditions deciding whether a rule
-/// variant applies at a node. All conditions must hold (AND).
+/// A set of `treeQuery == literal` conditions that must all hold.
 class Selector {
   /// Creates a selector from validated [conditions].
   Selector(this.conditions);
 
   /// Parses and validates a selector from rule book JSON.
   ///
-  /// [context] describes the owner (e.g. a rule key) for errors.
-  /// `null` yields [Selector.none].
+  /// [context] names the owner in errors; null gives [Selector.none].
   factory Selector.fromJson(Object? json, {required String context}) {
     if (json == null) return none;
     if (json is! Map) {
@@ -118,20 +113,16 @@ class Selector {
   /// The conditions: tree query → expected scalar literal.
   final Map<String, Object> conditions;
 
-  /// The number of conditions; more specific selectors win.
+  /// The number of conditions.
   int get specificity => conditions.length;
 
   /// Serializes the selector back to JSON.
   Json toJson() => Map<String, dynamic>.of(conditions);
 
   // ...........................................................................
-  /// Matches this selector at [node].
+  /// Matches this selector at [node], memoizing reads in [readCache].
   ///
-  /// A query resolving to nothing — including a shape mismatch — makes
-  /// the condition fail; only unresolved markers block.
-  ///
-  /// A [readCache], if given, memoizes reads across a [Rule.select]
-  /// call so a condition query shared by several variants is read once.
+  /// A missing value fails a condition; an unresolved marker blocks.
   MatchResult match(Tree<Json> node, {Map<String, ReadResult>? readCache}) {
     for (final MapEntry(key: query, value: expected) in conditions.entries) {
       final result = _read(node, query, readCache);
@@ -151,9 +142,7 @@ class Selector {
   }
 
   // ...........................................................................
-  /// Reads [query] at [node], reusing/filling [cache] when present.
-  /// Query errors are treated as "missing" (a shape mismatch is a
-  /// failed condition, not a resolution failure).
+  /// Reads [query] at [node] through [cache]; errors read as missing.
   static ReadResult _read(
     Tree<Json> node,
     String query,

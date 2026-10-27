@@ -16,7 +16,7 @@ void main() {
     });
 
     test('should reject invalid rule keys', () {
-      expect(isRuleKey('§borderWidth'), isFalse); // the § prefix is gone
+      expect(isRuleKey('§borderWidth'), isFalse); // no § prefix
       expect(isRuleKey(''), isFalse);
       expect(isRuleKey('9abc'), isFalse);
       expect(isRuleKey('a b'), isFalse);
@@ -31,8 +31,7 @@ void main() {
     });
 
     test('should reject everything else', () {
-      // Strings are never references — resolved values cannot
-      // accidentally look unresolved.
+      // Strings are never references.
       expect(isReference('§borderWidth'), isFalse);
       expect(isReference({'x': '§borderWidth'}), isFalse);
       expect(isReference({'§expression': '1'}), isFalse);

@@ -148,6 +148,7 @@ void main() {
         expect(result, isA<SelectAmbiguous>());
         final ambiguous = result as SelectAmbiguous;
         expect(ambiguous.specificity, 0);
+        expect(ambiguous.priority, 0);
         expect(ambiguous.matches.map((m) => m.index), [0, 1]);
       });
 
@@ -166,8 +167,7 @@ void main() {
         final result = rule.select(node('me', {'a': 1, 'b': 2}));
         expect(result, isA<SelectAmbiguous>());
         final ambiguous = result as SelectAmbiguous;
-        // The base variant (specificity 0) is outranked; only the two
-        // specificity-1 matches tie.
+        // Only the two one-condition matches tie.
         expect(ambiguous.specificity, 1);
         expect(ambiguous.matches.map((m) => m.index), [1, 2]);
       });
@@ -244,9 +244,7 @@ void main() {
       });
 
       test('should block when an earlier blocked variant could tie', () {
-        // The blocked variant (index 0) has the same specificity as the
-        // matching variant (index 1); once resolved it might match and
-        // create a tie, so selection must defer rather than pick one.
+        // Blocked variant 0 ranks like matching variant 1: selection defers.
         final rule = Rule.fromJson('w', [
           {
             'selector': {'#unresolved': 1},
@@ -283,8 +281,7 @@ void main() {
         expect(blocked.query, '#u1');
       });
 
-      // ---- when predicates (stubbed evaluator; CEL is exercised in
-      // resolver_test) ----
+      // ---- when predicates ----
 
       WhenEvaluator whenIs(Map<String, MatchResult> byPredicate) =>
           (variant, node, index) =>
@@ -346,9 +343,7 @@ void main() {
       });
 
       test("does not evaluate a dominated variant's when", () {
-        // Variant 0 (2 conditions) strictly outranks variant 1 (1
-        // condition + when). Variant 1's when must never run — a
-        // throwing evaluator proves it is skipped.
+        // Variant 0 outranks variant 1, whose `when` must never run.
         final rule = Rule.fromJson('w', [
           {
             'selector': {'#a': 1, '#b': 2},
@@ -410,6 +405,153 @@ void main() {
           {'when': 'P', 'expression': '1'},
         ]);
         expect(() => rule.select(node('me', {})), throwsStateError);
+      });
+
+      // ---- priority ----
+
+      test('should let a higher priority win at the same condition count', () {
+        final rule = Rule.fromJson('w', [
+          {
+            'selector': {'#a': 1},
+            'expression': 'A',
+          },
+          {
+            'selector': {'#b': 2},
+            'priority': 1,
+            'expression': 'B',
+          },
+        ]);
+        final result = rule.select(node('me', {'a': 1, 'b': 2}));
+        expect((result as SelectMatch).index, 1);
+      });
+
+      test('should let a higher priority win between holding whens', () {
+        final rule = Rule.fromJson('w', [
+          {'when': 'short', 'expression': '1'},
+          {'when': 'wide', 'priority': 1, 'expression': '2'},
+        ]);
+        final result = rule.select(
+          node('me', {}),
+          evaluateWhen: whenIs({
+            'short': const MatchSuccess(),
+            'wide': const MatchSuccess(),
+          }),
+        );
+        expect((result as SelectMatch).index, 1);
+      });
+
+      test('should rank more selector conditions over a higher priority', () {
+        final rule = Rule.fromJson('w', [
+          {'priority': 5, 'expression': 'base'},
+          {
+            'selector': {'#a': 1},
+            'expression': 'A',
+          },
+        ]);
+        final result = rule.select(node('me', {'a': 1}));
+        expect((result as SelectMatch).index, 1);
+      });
+
+      test('should rank a higher priority over a holding when', () {
+        final rule = Rule.fromJson('w', [
+          {'when': 'tall', 'expression': 'narrowed'},
+          {'priority': 1, 'expression': 'everywhere'},
+        ]);
+        final result = rule.select(
+          node('me', {}),
+          evaluateWhen: whenIs({'tall': const MatchSuccess()}),
+        );
+        expect((result as SelectMatch).index, 1);
+      });
+
+      test('should rank a when over the base at the same priority', () {
+        final rule = Rule.fromJson('w', [
+          {'priority': 1, 'expression': 'base'},
+          {'when': 'tall', 'priority': 1, 'expression': 'tall'},
+        ]);
+        final result = rule.select(
+          node('me', {}),
+          evaluateWhen: whenIs({'tall': const MatchSuccess()}),
+        );
+        expect((result as SelectMatch).index, 1);
+      });
+
+      test('should report a full tie in rank as ambiguous', () {
+        final rule = Rule.fromJson('w', [
+          {'priority': 3, 'expression': 'base'},
+          {
+            'selector': {'#a': 1},
+            'priority': 2,
+            'expression': 'A',
+          },
+          {
+            'selector': {'#b': 2},
+            'priority': 2,
+            'expression': 'B',
+          },
+          {
+            'selector': {'#c': 3},
+            'priority': 1,
+            'expression': 'C',
+          },
+        ]);
+        final result = rule.select(node('me', {'a': 1, 'b': 2, 'c': 3}));
+        final ambiguous = result as SelectAmbiguous;
+        expect(ambiguous.specificity, 1);
+        expect(ambiguous.priority, 2);
+        expect(ambiguous.matches.map((m) => m.index), [1, 2]);
+      });
+
+      test("should not evaluate a lower priority's when", () {
+        final rule = Rule.fromJson('w', [
+          {'when': 'P', 'expression': 'low'},
+          {'priority': 1, 'expression': 'high'},
+        ]);
+        final result = rule.select(
+          node('me', {}),
+          evaluateWhen: (v, n, i) =>
+              throw StateError('dominated when must not be evaluated'),
+        );
+        expect((result as SelectMatch).index, 1);
+      });
+
+      test('should defer on a blocked variant with a higher priority', () {
+        final rule = Rule.fromJson('w', [
+          {
+            'selector': {'#a': 1},
+            'expression': 'A',
+          },
+          {
+            'selector': {'#unresolved': 1},
+            'priority': 1,
+            'expression': 'U',
+          },
+        ]);
+        final me = node('me', {
+          'unresolved': const {'§': 'x'},
+          'a': 1,
+        });
+        final blocked = rule.select(me) as SelectBlocked;
+        expect(blocked.query, '#unresolved');
+      });
+
+      test('should ignore a blocked variant with a lower priority', () {
+        final rule = Rule.fromJson('w', [
+          {
+            'selector': {'#unresolved': 1},
+            'expression': 'U',
+          },
+          {
+            'selector': {'#a': 1},
+            'priority': 1,
+            'expression': 'A',
+          },
+        ]);
+        final me = node('me', {
+          'unresolved': const {'§': 'x'},
+          'a': 1,
+        });
+        expect((rule.select(me) as SelectMatch).index, 1);
       });
     });
 

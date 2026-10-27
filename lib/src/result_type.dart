@@ -6,10 +6,7 @@
 
 import 'tree_expressions_exception.dart';
 
-/// Optional result validation for a rule.
-///
-/// When a rule declares a result type, every resolved value of that
-/// rule is checked against it after evaluation.
+/// The type every resolved value of a rule must have.
 enum ResultType {
   /// The result must be an int or a double.
   number('number'),
@@ -33,7 +30,7 @@ enum ResultType {
 
   /// Parses [value] into a [ResultType].
   ///
-  /// [context] describes the owner (e.g. a rule key) for errors.
+  /// [context] names the owner in errors.
   static ResultType fromJson(Object? value, {required String context}) {
     for (final type in ResultType.values) {
       if (value == type.jsonValue) return type;
