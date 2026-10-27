@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.1.0 - 2026-10-27
 
 ### Added
 
@@ -9,17 +9,17 @@ by selector conditions, then priority, then `when`; a tie stays an
 error. `SelectAmbiguous`, `AmbiguousVariantException` and rich
 `ProvenanceEntry`s carry the priority.
 
-### Fixed
-
-- Under cel 0.6.0 a failed member read names its input again, and the
-hint for field access on a computed value appears only when it applies.
-
 ### Changed
 
 - Docs and conformance fixtures follow cel 0.6.0: bytes literals are
 rejected, and reading a missing map key is an error.
 - The parameter of `RuleBook.merge` is named `books`.
 - Neutral examples in docs and tests; shorter code comments.
+
+### Fixed
+
+- Under cel 0.6.0 a failed member read names its input again, and the
+hint for field access on a computed value appears only when it applies.
 
 ## 2.0.0 - 2026-10-05
 
