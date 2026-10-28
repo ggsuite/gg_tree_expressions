@@ -95,8 +95,8 @@ class Resolver {
   // ...........................................................................
   /// Resolves [tree] like [resolve] and reports what produced each value.
   ///
-  /// [rich] adds selector, `when`, priority, inputs, expression and alias
-  /// chain to each entry.
+  /// [rich] adds selector, scope, `when`, priority, inputs, expression and
+  /// alias chain to each entry.
   (Tree<T>, ResolutionReport) resolveVerbose<T extends Json>(
     Tree<T> tree, {
     bool inPlace = false,
@@ -206,11 +206,11 @@ class Resolver {
   Object? resolveRule(Tree<Json> node, Rule rule) {
     final context = 'rule "${rule.key}" at node "${node.path}"';
     switch (_select(rule, node)) {
-      case SelectBlocked(:final query, :final blocker):
+      case SelectBlocked(:final query, :final blocker, :final inScope):
         throw ResolveException([
           'Cannot resolve $context:',
-          'selector condition "$query" waits for the unresolved '
-              'value at "$blocker".',
+          '${inScope ? 'scope' : 'selector'} condition "$query" waits '
+              'for the unresolved value at "$blocker".',
         ]);
       case final SelectAmbiguous ambiguous:
         throw _ambiguousVariant(rule, node.path, ambiguous);
@@ -448,10 +448,10 @@ class Resolver {
     }
 
     switch (_select(rule, item.node)) {
-      case SelectBlocked(:final query, :final blocker):
+      case SelectBlocked(:final query, :final blocker, :final inScope):
         item.block(
-          'selector condition "$query" waits for the '
-          'unresolved value at "$blocker"',
+          '${inScope ? 'scope' : 'selector'} condition "$query" waits '
+          'for the unresolved value at "$blocker"',
           blocker,
         );
         return false;
@@ -559,6 +559,9 @@ class Resolver {
         value: result,
         selector: recorder.rich
             ? Map<String, Object>.of(variant.selector.conditions)
+            : null,
+        scope: recorder.rich
+            ? Map<String, Object>.of(variant.scope.conditions)
             : null,
         when: recorder.rich ? variant.when : null,
         priority: recorder.rich ? variant.priority : null,
@@ -842,8 +845,8 @@ class Resolver {
     [
       'No variant of rule "${rule.key}" matches at "$location":',
       ...reasons.map((r) => '  - $r'),
-      'Add a base variant (without selector) or mark the rule as '
-          'optional.',
+      'Add a base variant (without selector or scope) or mark the rule '
+          'as optional.',
     ],
     ruleKey: rule.key,
     location: location,
@@ -855,18 +858,23 @@ class Resolver {
     String location,
     SelectAmbiguous ambiguous,
   ) {
-    final SelectAmbiguous(:specificity, :priority, :matches) = ambiguous;
+    final SelectAmbiguous(:specificity, :scopeDepth, :priority, :matches) =
+        ambiguous;
+    final scopePart = scopeDepth == 0 ? '' : ', scope ($scopeDepth)';
     final priorityPart = priority == 0 ? '' : ' and priority ($priority)';
     return AmbiguousVariantException(
       [
         '${matches.length} variants of rule "${rule.key}" match at '
             '"$location" with the same specificity ($specificity)'
-            '$priorityPart — the winner is ambiguous:',
+            '$scopePart$priorityPart — the winner is ambiguous:',
         ...matches.map((m) {
+          final inScope = scopeDepth == 0
+              ? ''
+              : ', scope ${m.variant.scope.toJson()}';
           final when = m.variant.when;
           final whenPart = when == null ? '' : ', when "$when"';
           return '  - variant ${m.index}: selector '
-              '${m.variant.selector.toJson()}$whenPart';
+              '${m.variant.selector.toJson()}$inScope$whenPart';
         }),
         'Make the selectors (or `when` predicates) specific enough that '
             'exactly one variant applies.',
@@ -874,6 +882,7 @@ class Resolver {
       ruleKey: rule.key,
       location: location,
       specificity: specificity,
+      scopeDepth: scopeDepth,
       priority: priority,
       variantIndices: [for (final m in matches) m.index],
     );

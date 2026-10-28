@@ -119,6 +119,7 @@ class AmbiguousVariantException extends TreeExpressionsException {
     required this.location,
     required this.specificity,
     required this.variantIndices,
+    this.scopeDepth = 0,
     this.priority = 0,
   });
 
@@ -130,6 +131,9 @@ class AmbiguousVariantException extends TreeExpressionsException {
 
   /// The shared specificity of the tied variants.
   final int specificity;
+
+  /// The shared scope condition count of the tied variants.
+  final int scopeDepth;
 
   /// The shared priority of the tied variants.
   final int priority;

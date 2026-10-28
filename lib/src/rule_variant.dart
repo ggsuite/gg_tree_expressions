@@ -27,13 +27,21 @@ class RuleVariant {
     this.expression,
     this.value,
     Selector? selector,
+    Selector? scope,
     Map<String, RuleInput>? inputs,
     this.when,
     this.priority = 0,
     this.description,
   }) : assert((expression == null) != (value == null), 'expression xor value'),
        assert(priority >= 0, 'priority >= 0'),
+       assert(
+         selector == null ||
+             scope == null ||
+             !selector.conditions.keys.any(scope.conditions.containsKey),
+         'no query in both selector and scope',
+       ),
        selector = selector ?? Selector.none,
+       scope = scope ?? Selector.none,
        inputs = inputs ?? const {};
 
   /// Parses and validates a variant from rule book JSON.
@@ -46,6 +54,7 @@ class RuleVariant {
 
     const allowed = {
       'selector',
+      'scope',
       'when',
       'priority',
       'inputs',
@@ -101,10 +110,26 @@ class RuleVariant {
       ]);
     }
 
+    final selector = Selector.fromJson(json['selector'], context: context);
+    final scope = Selector.fromJson(
+      json['scope'],
+      context: context,
+      label: 'scope',
+    );
+    final both = selector.conditions.keys.where(scope.conditions.containsKey);
+    if (both.isNotEmpty) {
+      throw SchemaException([
+        'The query "${both.first}" is in both "selector" and "scope" '
+            'of $context.',
+        'A query belongs to one of them.',
+      ]);
+    }
+
     return RuleVariant(
       expression: expression as String?,
       value: value,
-      selector: Selector.fromJson(json['selector'], context: context),
+      selector: selector,
+      scope: scope,
       inputs: _inputsFromJson(json['inputs'], context: context),
       when: when as String?,
       priority: priority,
@@ -126,13 +151,16 @@ class RuleVariant {
   /// The marker-free JSON result; null for an [expression] variant.
   final Object? value;
 
-  /// The conditions to apply; [Selector.none] marks the base variant.
+  /// The conditions to apply; empty here and in [scope] for the base variant.
   final Selector selector;
+
+  /// Further conditions on where it applies; [Selector.none] for anywhere.
+  final Selector scope;
 
   /// An optional CEL bool predicate over [inputs] that must also hold.
   final String? when;
 
-  /// The higher priority wins among variants with equal condition count.
+  /// The higher priority wins at equal selector and scope condition counts.
   final int priority;
 
   /// Bindings from CEL identifiers to tree queries.
@@ -151,6 +179,7 @@ class RuleVariant {
   /// Serializes the variant back to JSON.
   Json toJson() => {
     if (selector.conditions.isNotEmpty) 'selector': selector.toJson(),
+    if (scope.conditions.isNotEmpty) 'scope': scope.toJson(),
     if (when != null) 'when': when,
     if (priority != 0) 'priority': priority,
     if (inputs.isNotEmpty)

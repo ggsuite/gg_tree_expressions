@@ -43,7 +43,7 @@ thousands of items per run):
 
 | Profile | Shape | What it stresses |
 |---|---|---|
-| slotTreeLike | 200–2000 nodes, depth 5–8, refs on ~10% of nodes, book of 10–50 rules, multi-segment inherited queries (`#settings/...`) | the realistic path |
+| layeredTreeLike | 200–2000 nodes, depth 5–8, refs on ~10% of nodes, book of 10–50 rules, multi-segment inherited queries (`#settings/...`) | the realistic path |
 | denseRefs | ref/inline on every node | collect + worklist volume |
 | deepChain | dependency chains of length 8 / 32 (ref reads value produced by previous ref) | deferral rounds (worst case: rounds × items) |
 | wideBook | 500-rule book, 2–4 selector conditions per variant | `Rule.select` / selector matching |
@@ -58,7 +58,7 @@ consumers ship AOT, JIT-only numbers mislead):
   `deepCopy` cost),
 - `Resolver(ruleBook: …)` construction (eager ANTLR parse + plan of
   every expression — matters if consumers build one Resolver per
-  fit; the compile cache `_cache` is per-instance),
+  resolve run; the compile cache `_cache` is per-instance),
 - micro: `readQuery` per query shape, `Selector.match`,
   `CompiledExpression.evaluate`, `containsMarker` on large values.
 
@@ -122,7 +122,7 @@ value/risk:
    developing, and keep the shipped corpus as the tripwire.
 4. **Shared/injectable expression cache** (low risk): allow passing
    a `Map<String, CompiledExpression>` into `Resolver` (or make the
-   cache static) so a Resolver-per-fit consumer does not re-parse
+   cache static) so one resolver per resolve run does not re-parse
    the book each time. Only if Phase 1 shows construction matters.
 5. **`containsMarker` cost** (only if `bigValues` convicts it):
    options — skip deep check when the scan already walked the full

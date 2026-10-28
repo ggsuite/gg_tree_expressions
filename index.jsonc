@@ -1,0 +1,33 @@
+// @license
+// Copyright (c) ggsuite
+//
+// Use of this source code is governed by terms that can be
+// found in the LICENSE file in the root of this package.
+
+{
+  // The package name, as declared in pubspec.yaml / package.json.
+  "name": "gg_tree_expressions",
+
+  // 1-2 sentence summary about this repo.
+  "summary": "Rule/expression engine for gg_tree trees: JSON rule books, CEL expressions, references resolved in node context.",
+
+  // 1-3 bullet points: the problem space.
+  "domain": [
+    "Rule books: variants with selector, scope, when, priority, inputs, expression or value; merge, lint",
+    "Resolver: resolve, resolveVerbose (ResolutionReport), resolveAtomic, partial resolution (where), caller context",
+    "Annotation books: annotate / annotateNode"
+  ],
+
+  // The repos this one depends on and the repos depending on it.
+  // Keep the reason or the API behind each entry, not just the name.
+  "interfaces": {
+    // "<repo-a>": "why / API"
+    "uses": {
+      "gg_json": "Json, deepCopy, deeplEquals, data paths",
+      "gg_tree": "Tree, tree queries, node paths"
+    },
+
+    // "<repo-b>": "why / API"
+    "usedBy": {}
+  }
+}

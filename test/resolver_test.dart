@@ -189,6 +189,29 @@ void main() {
         expect(minimal.entries.single.priority, isNull);
       });
 
+      test('should report the winning scope in rich mode only', () {
+        final book = {
+          'w': [
+            {'expression': '1.0'},
+            {
+              'scope': {'#team': 'a'},
+              'expression': '2.0',
+            },
+          ],
+        };
+        Tree<Json> tree() => node('root', {'team': 'a', 'v': ref('w')});
+
+        final (_, rich) = resolver(book).resolveVerbose(tree(), rich: true);
+        final e = rich.entries.single;
+        expect(e.variantIndex, 1);
+        expect(e.scope, {'#team': 'a'});
+        expect(e.toJson()['scope'], {'#team': 'a'});
+        expect(e.toString(), contains('scope {#team: a}'));
+
+        final (_, minimal) = resolver(book).resolveVerbose(tree());
+        expect(minimal.entries.single.scope, isNull);
+      });
+
       test('should report inline provenance (minimal and rich)', () {
         Tree<Json> tree() => node('root', {
           'x': {'§expression': '2 * 3'},
@@ -700,7 +723,13 @@ void main() {
         expect(e, isA<NoVariantException>());
         expect(e!.message, contains('No variant of rule "sel"'));
         expect(e.message, contains('found "mobile"'));
-        expect(e.message, contains('Add a base variant'));
+        expect(
+          e.message,
+          contains(
+            'Add a base variant (without selector or scope) or mark the '
+            'rule as optional.',
+          ),
+        );
       });
 
       test('should fail on ambiguous same-specificity matches', () {
@@ -760,6 +789,158 @@ void main() {
             'specificity (1) and priority (1) — the winner is ambiguous:',
           ),
         );
+      });
+
+      test('should resolve layered scopes in one book', () {
+        final book = {
+          'w': [
+            {'expression': '1.0'},
+            {
+              'selector': {'#kind': 'dialog'},
+              'expression': '2.0',
+            },
+            {
+              'scope': {'#team': 'a'},
+              'expression': '10.0',
+            },
+            {
+              'scope': {'#team': 'a', '#project': 'x'},
+              'expression': '100.0',
+            },
+            {
+              'selector': {'#kind': 'dialog'},
+              'scope': {'#team': 'a', '#project': 'x'},
+              'expression': '200.0',
+            },
+          ],
+        };
+        Tree<Json> leaves() => node('leaves', {}, [
+          node('label', {'v': ref('w')}),
+          node('dialog', {'kind': 'dialog', 'v': ref('w')}),
+        ]);
+        final resolved = resolver(book).resolve(
+          node('root', {}, [
+            leaves(),
+            node(
+              'team',
+              {'team': 'a'},
+              [
+                leaves(),
+                node('project', {'project': 'x'}, [leaves()]),
+              ],
+            ),
+          ]),
+        );
+        double? at(String path) =>
+            resolved.childByPath(path).getOrNull<double>('./#v');
+
+        expect(at('leaves/label'), 1.0);
+        expect(at('leaves/dialog'), 2.0);
+        expect(at('team/leaves/label'), 10.0);
+        expect(at('team/leaves/dialog'), 2.0);
+        expect(at('team/project/leaves/label'), 100.0);
+        expect(at('team/project/leaves/dialog'), 200.0);
+      });
+
+      test('should not wait on a variant whose scope fails', () {
+        final merged = RuleBook.merge([
+          RuleBook.fromJson({
+            'w': [
+              {'expression': '1.0'},
+            ],
+            'h': [
+              {'expression': '2.0'},
+            ],
+          }),
+          RuleBook.fromJson({
+            'h': [
+              {
+                'selector': {'#w': 1.0},
+                'scope': {'#team': 'a'},
+                'expression': '3.0',
+              },
+            ],
+          }),
+          RuleBook.fromJson({
+            'w': [
+              {
+                'selector': {'#h': 2.0},
+                'scope': {'#team': 'b'},
+                'expression': '4.0',
+              },
+            ],
+          }),
+        ]);
+        Json resolved(String team) => Resolver(ruleBook: merged)
+            .resolve(node('root', {'team': team, 'w': ref('w'), 'h': ref('h')}))
+            .data;
+
+        expect(resolved('a'), {'team': 'a', 'w': 1.0, 'h': 3.0});
+        expect(resolved('b'), {'team': 'b', 'w': 4.0, 'h': 2.0});
+      });
+
+      test('should not wait on a blocked condition when another fails', () {
+        for (final scope in [
+          {'#h': 2.0, '#team': 'b'},
+          {'#team': 'b', '#h': 2.0},
+        ]) {
+          final book = RuleBook.fromJson({
+            'w': [
+              {'expression': '1.0'},
+              {'scope': scope, 'expression': '4.0'},
+            ],
+            'h': [
+              {'expression': '2.0'},
+              {
+                'selector': {'#w': 1.0},
+                'scope': {'#team': 'a'},
+                'expression': '3.0',
+              },
+            ],
+          });
+          Json resolved(String team) => Resolver(ruleBook: book)
+              .resolve(
+                node('root', {'team': team, 'w': ref('w'), 'h': ref('h')}),
+              )
+              .data;
+
+          expect(resolved('a'), {'team': 'a', 'w': 1.0, 'h': 3.0});
+          expect(resolved('b'), {'team': 'b', 'w': 4.0, 'h': 2.0});
+        }
+      });
+
+      test('should name a shared scope in the ambiguity message', () {
+        final e = catchException(
+          () => resolver(
+            {
+              'w': [
+                {'expression': '0.0'},
+                {
+                  'scope': {'#team': 'a'},
+                  'priority': 1,
+                  'expression': '1.0',
+                },
+                {
+                  'scope': {'#project': 'x'},
+                  'priority': 1,
+                  'expression': '2.0',
+                },
+              ],
+            },
+          ).resolve(node('root', {'team': 'a', 'project': 'x', 'v': ref('w')})),
+        );
+        final ambiguous = e! as AmbiguousVariantException;
+        expect(ambiguous.specificity, 0);
+        expect(ambiguous.scopeDepth, 1);
+        expect(ambiguous.priority, 1);
+        expect(ambiguous.variantIndices, [1, 2]);
+        expect(ambiguous.messages.take(3), [
+          '2 variants of rule "w" match at "/#v" with the same '
+              'specificity (0), scope (1) and priority (1) — the winner is '
+              'ambiguous:',
+          '  - variant 1: selector {}, scope {#team: a}',
+          '  - variant 2: selector {}, scope {#project: x}',
+        ]);
       });
 
       test('should remove optional references that match nothing', () {
@@ -834,6 +1015,34 @@ void main() {
         expect(e.message, contains('selector condition "#b" waits'));
         expect(e.message, contains('input "x" of the inline expression'));
         expect((e as StuckException).pending, hasLength(2));
+      });
+
+      test('should name a blocked scope condition when stuck', () {
+        final e = catchException(
+          () => resolver({
+            'teamName': [
+              {
+                'selector': {'#v': 1},
+                'expression': "'a'",
+              },
+            ],
+            'w': [
+              {
+                'scope': {'#team': 'a'},
+                'expression': '1',
+              },
+            ],
+          }).resolve(node('root', {'team': ref('teamName'), 'v': ref('w')})),
+        );
+        expect(e, isA<StuckException>());
+        expect(
+          e!.message,
+          contains(
+            'scope condition "#team" waits for the unresolved value at '
+            '"/#team"',
+          ),
+        );
+        expect(e.message, contains('selector condition "#v" waits'));
       });
 
       test('should wrap deep-copy failures clearly', () {
@@ -2286,6 +2495,26 @@ void main() {
         );
         expect(message, contains('Cannot resolve rule "w" at node "/"'));
         expect(message, contains('selector condition "#u" waits'));
+      });
+
+      test('should name a blocked scope condition', () {
+        final scopedRule = Rule.fromJson('w', [
+          {
+            'scope': {'#u': 1},
+            'expression': '1',
+          },
+        ]);
+        final message = messageOfCall(
+          () =>
+              resolver({})
+                  .resolveRule(node('root', {'u': ref('x')}), scopedRule),
+        );
+        expect(
+          message,
+          contains(
+            'scope condition "#u" waits for the unresolved value at "/#u".',
+          ),
+        );
       });
 
       test('should throw when inputs are blocked', () {

@@ -79,6 +79,41 @@ void main() {
         }
         expect(message, contains('Null is not allowed'));
       });
+
+      test('should name the label in errors', () {
+        String messageOf(Object json, {String label = 'selector'}) {
+          try {
+            Selector.fromJson(json, context: 'rule "x"', label: label);
+          } on SchemaException catch (e) {
+            return e.message;
+          }
+          return '';
+        }
+
+        expect(
+          messageOf({'#a': null}),
+          contains('Selector condition "#a" in rule "x" has an invalid'),
+        );
+        expect(
+          messageOf('dark', label: 'scope'),
+          contains('The scope in rule "x" must be a JSON object'),
+        );
+        expect(
+          messageOf({'a#b#c': 1}, label: 'scope'),
+          contains('Invalid query "a#b#c" in the scope of rule "x"'),
+        );
+        expect(
+          messageOf({'#a': null}, label: 'scope'),
+          contains('Scope condition "#a" in rule "x" has an invalid'),
+        );
+      });
+
+      test('should assert a non-empty label', () {
+        expect(
+          () => Selector.fromJson({'#a': null}, context: 'x', label: ''),
+          throwsA(isA<AssertionError>()),
+        );
+      });
     });
 
     group('toJson()', () {
@@ -165,6 +200,33 @@ void main() {
         final blocked = result as MatchBlocked;
         expect(blocked.query, './#w');
         expect(blocked.blocker, '/#w');
+      });
+
+      group('with blocked and failing conditions', () {
+        final me = node('me', {
+          'u': const {'§': 'x'},
+          'v': const {'§': 'y'},
+          'w': 3,
+        });
+
+        test('should fail when a blocked condition comes first', () {
+          final selector = Selector({'./#u': 1, './#w': 2});
+          final failure = selector.match(me) as MatchFailure;
+          expect(failure.query, './#w');
+          expect(failure.reason, contains('found "3"'));
+        });
+
+        test('should fail when a failing condition comes first', () {
+          final selector = Selector({'./#w': 2, './#u': 1});
+          expect((selector.match(me) as MatchFailure).query, './#w');
+        });
+
+        test('should return the first block when nothing fails', () {
+          final selector = Selector({'./#v': 1, './#u': 1, './#w': 3});
+          final blocked = selector.match(me) as MatchBlocked;
+          expect(blocked.query, './#v');
+          expect(blocked.blocker, '/#v');
+        });
       });
 
       group('with a readCache', () {

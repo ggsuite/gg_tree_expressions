@@ -154,6 +154,7 @@ void main() {
         );
         expect(message, contains('Allowed keys:'));
         expect(message, contains('  - selector'));
+        expect(message, contains('  - scope'));
         expect(message, contains('  - inputs'));
         expect(message, contains('  - expression'));
         expect(message, contains('  - value'));
@@ -524,6 +525,118 @@ void main() {
         final copy = RuleVariant.fromJson(variant.toJson(), context: 'copy');
         expect(copy.priority, 1);
         expect(copy.toJson(), json);
+      });
+    });
+
+    group('scope', () {
+      String messageOfParse(Object? scope, {Object? selector}) {
+        try {
+          RuleVariant.fromJson({
+            'selector': ?selector,
+            'scope': scope,
+            'expression': '1',
+          }, context: 'test variant');
+        } on SchemaException catch (e) {
+          return e.message;
+        }
+        return '';
+      }
+
+      test('should default to Selector.none', () {
+        expect(RuleVariant(expression: 'x').scope, same(Selector.none));
+        final parsed = RuleVariant.fromJson({
+          'expression': '1',
+        }, context: 'test variant');
+        expect(parsed.scope, same(Selector.none));
+      });
+
+      test('should parse conditions apart from the selector', () {
+        final variant = RuleVariant.fromJson({
+          'selector': {'#kind': 'dialog'},
+          'scope': {'#team': 'a', '#project': 'x'},
+          'expression': '1',
+        }, context: 'test variant');
+        expect(variant.selector.conditions, {'#kind': 'dialog'});
+        expect(variant.scope.conditions, {'#team': 'a', '#project': 'x'});
+        expect(variant.scope.specificity, 2);
+      });
+
+      test('should reject invalid JSON like a selector', () {
+        expect(
+          messageOfParse('a'),
+          contains('The scope in test variant must be a JSON object'),
+        );
+        expect(
+          messageOfParse({'a#b#c': 1}),
+          contains('Invalid query "a#b#c" in the scope of test variant'),
+        );
+        expect(
+          messageOfParse({'#a': null}),
+          contains('Scope condition "#a" in test variant has an invalid'),
+        );
+      });
+
+      test('should reject a query in both selector and scope', () {
+        final message = messageOfParse(
+          {'#team': 'a', '#project': 'x'},
+          selector: {'#kind': 'dialog', '#project': 'y'},
+        );
+        expect(
+          message,
+          contains(
+            'The query "#project" is in both "selector" and "scope" of '
+            'test variant.',
+          ),
+        );
+        expect(message, contains('A query belongs to one of them.'));
+      });
+
+      test('should assert no query in both selector and scope', () {
+        expect(
+          () => RuleVariant(
+            expression: 'x',
+            selector: Selector({'#team': 'a'}),
+            scope: Selector({'#team': 'b'}),
+          ),
+          throwsA(isA<AssertionError>()),
+        );
+        expect(
+          RuleVariant(
+            expression: 'x',
+            selector: Selector({'#kind': 'dialog'}),
+            scope: Selector({'#team': 'a'}),
+          ).scope.conditions,
+          {'#team': 'a'},
+        );
+      });
+
+      test('should omit an empty scope in toJson', () {
+        expect(RuleVariant(expression: 'x', scope: Selector.none).toJson(), {
+          'expression': 'x',
+        });
+        final parsed = RuleVariant.fromJson({
+          'scope': <String, Object>{},
+          'expression': '1',
+        }, context: 'test variant');
+        expect(parsed.toJson(), {'expression': '1'});
+      });
+
+      test('should round-trip a scope after the selector', () {
+        final json = {
+          'selector': {'#kind': 'dialog'},
+          'scope': {'#team': 'a'},
+          'when': 'h > 1.0',
+          'priority': 1,
+          'inputs': {'h': '#h'},
+          'expression': '2.0',
+          'description': 'Team a dialogs.',
+        };
+        final variant = RuleVariant.fromJson(json, context: 'x');
+        expect(variant.toJson(), json);
+        expect(variant.toJson().keys, json.keys);
+        final copy = RuleVariant.fromJson(variant.toJson(), context: 'copy');
+        expect(copy.scope.conditions, {'#team': 'a'});
+        expect(copy.toJson().keys, json.keys);
       });
     });
 

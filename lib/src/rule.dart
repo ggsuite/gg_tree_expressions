@@ -41,25 +41,36 @@ class SelectNone extends SelectResult {
   final List<String> reasons;
 }
 
-/// A selector read an unresolved value; selection must be retried.
+/// A condition read an unresolved value; selection must be retried.
 class SelectBlocked extends SelectResult {
   /// Creates the result naming the blocking [query] and [blocker].
-  const SelectBlocked(this.query, this.blocker);
+  const SelectBlocked(this.query, this.blocker, {this.inScope = false});
 
-  /// The query of the blocked selector condition.
+  /// The query of the blocked selector or scope condition.
   final String query;
 
   /// The location of the unresolved value.
   final String blocker;
+
+  /// True when the blocked condition is a scope condition.
+  final bool inScope;
 }
 
 /// Two or more variants match at the winning rank.
 class SelectAmbiguous extends SelectResult {
   /// Creates the result for the tied [matches] and their rank.
-  const SelectAmbiguous(this.specificity, this.matches, {this.priority = 0});
+  const SelectAmbiguous(
+    this.specificity,
+    this.matches, {
+    this.scopeDepth = 0,
+    this.priority = 0,
+  });
 
   /// The selector condition count of the tied variants.
   final int specificity;
+
+  /// The shared [RuleVariant.scope] condition count of the tied variants.
+  final int scopeDepth;
 
   /// The shared [RuleVariant.priority] of the tied variants.
   final int priority;
@@ -76,15 +87,11 @@ typedef WhenEvaluator = MatchResult Function(
   int index,
 );
 
-/// A variant whose selector matches or is blocked (`selectorBlock`).
-typedef _Ranked = ({
-  RuleVariant variant,
-  int index,
-  SelectBlocked? selectorBlock,
-});
+/// A variant whose selector and scope match or block (`block`).
+typedef _Ranked = ({RuleVariant variant, int index, SelectBlocked? block});
 
 /// A variant's rank in [Rule.select], compared in field order.
-typedef _Rank = ({int conditions, int priority, bool hasWhen});
+typedef _Rank = ({int conditions, int scope, int priority, bool hasWhen});
 
 // .............................................................................
 /// A named unit consisting of one or more variants.
@@ -200,34 +207,41 @@ class Rule {
   // ...........................................................................
   /// Selects the winning variant at [node].
   ///
-  /// Ranks applying variants by selector conditions, then priority, then
-  /// `when`; a tie gives [SelectAmbiguous]. [evaluateWhen] evaluates the
-  /// `when` predicates.
+  /// Ranks applying variants by selector conditions, scope conditions,
+  /// priority, then `when`; a tie gives [SelectAmbiguous]. [evaluateWhen]
+  /// evaluates the `when` predicates.
   SelectResult select(Tree<Json> node, {WhenEvaluator? evaluateWhen}) {
     final readCache = <String, ReadResult>{};
     final reasons = <String>[];
 
-    // Pass 1: group the variants by rank, matching selectors only.
+    // Pass 1: group the variants by rank, matching selectors and scopes.
     final byTier = <_Rank, List<_Ranked>>{};
     for (var i = 0; i < variants.length; i++) {
       final variant = variants[i];
       final rank = _rank(variant);
-      switch (variant.selector.match(node, readCache: readCache)) {
-        case MatchSuccess():
-          (byTier[rank] ??= []).add((
-            variant: variant,
-            index: i,
-            selectorBlock: null,
-          ));
-        case MatchBlocked(:final query, :final blocker):
-          (byTier[rank] ??= []).add((
-            variant: variant,
-            index: i,
-            selectorBlock: SelectBlocked(query, blocker),
-          ));
-        case MatchFailure(:final reason):
-          reasons.add('variant $i: $reason');
+      final selectorMatch = variant.selector.match(node, readCache: readCache);
+      if (selectorMatch is MatchFailure) {
+        reasons.add('variant $i: ${selectorMatch.reason}');
+        continue;
       }
+      final scopeMatch = variant.scope.match(node, readCache: readCache);
+      if (scopeMatch is MatchFailure) {
+        reasons.add('variant $i: scope ${scopeMatch.reason}');
+        continue;
+      }
+      final block = switch ((selectorMatch, scopeMatch)) {
+        (MatchBlocked(:final query, :final blocker), _) => SelectBlocked(
+          query,
+          blocker,
+        ),
+        (_, MatchBlocked(:final query, :final blocker)) => SelectBlocked(
+          query,
+          blocker,
+          inScope: true,
+        ),
+        _ => null,
+      };
+      (byTier[rank] ??= []).add((variant: variant, index: i, block: block));
     }
 
     // Pass 2: decide from the highest tier down.
@@ -236,8 +250,8 @@ class Rule {
       final applies = <SelectMatch>[];
       SelectBlocked? blocked;
       for (final ranked in byTier[tier]!) {
-        if (ranked.selectorBlock != null) {
-          blocked ??= ranked.selectorBlock;
+        if (ranked.block != null) {
+          blocked ??= ranked.block;
           continue;
         }
         final variant = ranked.variant;
@@ -266,6 +280,7 @@ class Rule {
         return SelectAmbiguous(
           tier.conditions,
           applies,
+          scopeDepth: tier.scope,
           priority: tier.priority,
         );
       }
@@ -329,16 +344,18 @@ class Rule {
   /// The rank of [variant] in [select].
   static _Rank _rank(RuleVariant variant) => (
     conditions: variant.selector.specificity,
+    scope: variant.scope.specificity,
     priority: variant.priority,
     hasWhen: variant.hasWhen,
   );
 
   // ...........................................................................
-  /// Sorts ranks highest first: conditions, then priority, then `when`.
+  /// Sorts ranks highest first: conditions, scope, priority, then `when`.
   static int _higherFirst(_Rank a, _Rank b) {
     if (a.conditions != b.conditions) {
       return b.conditions.compareTo(a.conditions);
     }
+    if (a.scope != b.scope) return b.scope.compareTo(a.scope);
     if (a.priority != b.priority) return b.priority.compareTo(a.priority);
     return (b.hasWhen ? 1 : 0).compareTo(a.hasWhen ? 1 : 0);
   }

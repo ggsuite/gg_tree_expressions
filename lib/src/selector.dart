@@ -74,12 +74,18 @@ class Selector {
 
   /// Parses and validates a selector from rule book JSON.
   ///
-  /// [context] names the owner in errors; null gives [Selector.none].
-  factory Selector.fromJson(Object? json, {required String context}) {
+  /// [context] names the owner and [label], not empty, the field in errors;
+  /// null gives [Selector.none].
+  factory Selector.fromJson(
+    Object? json, {
+    required String context,
+    String label = 'selector',
+  }) {
+    assert(label.isNotEmpty, 'label is not empty');
     if (json == null) return none;
     if (json is! Map) {
       throw SchemaException([
-        'The selector in $context must be a JSON object '
+        'The $label in $context must be a JSON object '
             'mapping tree queries to literals.',
         'Got: $json',
       ]);
@@ -88,10 +94,11 @@ class Selector {
     final conditions = <String, Object>{};
     for (final MapEntry(:key, :value) in json.entries) {
       final query = key as String;
-      validateQuery(query, context: 'the selector of $context');
+      validateQuery(query, context: 'the $label of $context');
       if (value is! String && value is! num && value is! bool) {
         throw SchemaException([
-          'Selector condition "$query" in $context has an invalid '
+          '${label[0].toUpperCase()}${label.substring(1)} condition '
+              '"$query" in $context has an invalid '
               'literal: $value (${value.runtimeType}).',
           'Literals must be a string, a number, or a bool. '
               'Null is not allowed — gg_tree treats null values as '
@@ -122,14 +129,16 @@ class Selector {
   // ...........................................................................
   /// Matches this selector at [node], memoizing reads in [readCache].
   ///
-  /// A missing value fails a condition; an unresolved marker blocks.
+  /// A missing value fails a condition; an unresolved marker blocks. The
+  /// first failure wins over any block, else the first block is returned.
   MatchResult match(Tree<Json> node, {Map<String, ReadResult>? readCache}) {
+    MatchBlocked? blocked;
     for (final MapEntry(key: query, value: expected) in conditions.entries) {
       final result = _read(node, query, readCache);
 
       switch (result) {
         case ReadBlocked(:final blocker):
-          return MatchBlocked(query, blocker);
+          blocked ??= MatchBlocked(query, blocker);
         case ReadMissing():
           return MatchFailure(query, expected, null);
         case ReadValue(:final value):
@@ -138,7 +147,7 @@ class Selector {
           }
       }
     }
-    return const MatchSuccess();
+    return blocked ?? const MatchSuccess();
   }
 
   // ...........................................................................

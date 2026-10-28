@@ -29,6 +29,7 @@ class ProvenanceEntry {
     this.variantIndex,
     this.value,
     this.selector,
+    this.scope,
     this.when,
     this.priority,
     this.inputs,
@@ -53,6 +54,9 @@ class ProvenanceEntry {
 
   /// Rich only: the winning variant's selector conditions.
   final Map<String, Object>? selector;
+
+  /// Rich only: the winning variant's scope conditions; omitted when empty.
+  final Map<String, Object>? scope;
 
   /// Rich only: the winning variant's `when` predicate.
   final String? when;
@@ -83,6 +87,7 @@ class ProvenanceEntry {
         : '= $value';
     final detail = <String>[
       if (selector != null && selector!.isNotEmpty) 'selector $selector',
+      if (_hasScope) 'scope $scope',
       if (when != null) 'when "$when"',
       if (_hasPriority) 'priority $priority',
       if (inputs != null && inputs!.isNotEmpty) 'inputs $inputs',
@@ -102,12 +107,15 @@ class ProvenanceEntry {
     if (variantIndex != null) 'variantIndex': variantIndex,
     if (kind != ProvenanceKind.optionalRemoval) 'value': value,
     if (selector != null) 'selector': selector,
+    if (_hasScope) 'scope': scope,
     if (when != null) 'when': when,
     if (_hasPriority) 'priority': priority,
     if (inputs != null) 'inputs': inputs,
     if (expression != null) 'expression': expression,
     if (aliasChain != null) 'aliasChain': aliasChain,
   };
+
+  bool get _hasScope => scope?.isNotEmpty ?? false;
 
   bool get _hasPriority => (priority ?? 0) != 0;
 }

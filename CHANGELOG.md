@@ -1,5 +1,25 @@
 # Changelog
 
+## 2.2.0 - 2026-10-28
+
+### Added
+
+- `scope` on rule variants: equality conditions written like a selector
+that limit where a variant applies. Variants rank by selector
+conditions, then scope conditions, then priority, then `when`; a tie
+stays an error. `SelectAmbiguous` and `AmbiguousVariantException`
+carry `scopeDepth`, `SelectBlocked` carries `inScope`, rich
+`ProvenanceEntry`s carry the scope.
+- `Selector.fromJson` takes a `label` for its error messages.
+- `index.jsonc`.
+
+### Changed
+
+- A failing selector or scope condition wins over a blocked one, so a
+variant whose conditions fail no longer waits for an unresolved value.
+- A base variant has neither selector nor scope conditions; the
+NoVariant hint says so.
+
 ## 2.1.0 - 2026-10-27
 
 ### Added
@@ -96,7 +116,7 @@ untouched nodes keep their data maps and nested values.
 ### Added
 
 - `Resolver` accepts an optional `expressionCache` so resolvers built
-per fit/article share compiled expressions instead of re-parsing the
+per resolve run share compiled expressions instead of re-parsing the
 rule book each time (warm construction ~99% cheaper).
 - Benchmark harness under `benchmark/` (six workload profiles, JIT and
 AOT) with baselines and attribution in `benchmark/RESULTS.md`.

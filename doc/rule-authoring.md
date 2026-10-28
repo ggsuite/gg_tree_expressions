@@ -175,6 +175,7 @@ literal `value`.
 ```jsonc
 {
   "selector":    { <treeQuery>: <literal>, ... },   // optional
+  "scope":       { <treeQuery>: <literal>, ... },   // optional (§4.7)
   "when":        "<CEL bool predicate>",             // optional (§4.6)
   "priority":    <integer ≥ 0>,                      // optional (§4.4)
   "inputs":      { <identifier>: <query|longForm>, ... },  // optional
@@ -184,18 +185,19 @@ literal `value`.
 }
 ```
 
-Allowed keys are **exactly** `selector`, `when`, `priority`, `inputs`,
-`expression`, `value`, `description`. Any other key → `SchemaException`.
-Giving both `expression` and `value`, or neither, is also a
-`SchemaException`.
+Allowed keys are **exactly** `selector`, `scope`, `when`, `priority`,
+`inputs`, `expression`, `value`, `description`. Any other key →
+`SchemaException`. Giving both `expression` and `value`, or neither, is
+also a `SchemaException`.
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `expression` | string (CEL) | **one of** `expression` / `value` | Must be non-empty after trimming. Computes the result. |
 | `value` | any non-null JSON | **one of** `expression` / `value` | A literal result, written as a fresh deep copy on every use. `null` is rejected (gg_tree treats null as missing). Must **not** contain a marker — a map with a `§`-prefixed key would be read as a reference or inline expression, so write marker *examples* as strings. Mostly used for static documentation in annotation books (§20). |
-| `selector` | object | no | Equality conditions for this variant to apply. Absent/empty ⇒ **base variant** (specificity 0, matches everywhere). |
+| `selector` | object | no | Equality conditions for this variant to apply: the case it answers. Absent/empty, with no `scope` ⇒ **base variant** (specificity 0, matches everywhere). |
+| `scope` | object | no | Equality conditions written like a selector: where the variant applies (§4.7). It must also match. No query may be in both `selector` and `scope`. Meant for layered books (§11). |
 | `when` | string (CEL) | no | A bool predicate that must **also** hold for the variant to apply (§4.6). For ranges/comparisons/OR that equality cannot express. |
-| `priority` | integer ≥ 0 | no | Default 0. Among variants with the same number of selector conditions, the higher priority wins, before `when` counts (§4.4). Meant for layered books (§11). |
+| `priority` | integer ≥ 0 | no | Default 0. Among variants with the same number of selector and scope conditions, the higher priority wins, before `when` counts (§4.4). |
 | `inputs` | object | no | Binds CEL identifiers to tree queries or, long form, to caller-context paths (§5.5), shared by `when` and `expression`. Absent ⇒ no inputs. On a `value` variant they only serve its `when`. |
 | `description` | string | no | Documentation only; ignored at runtime. |
 
@@ -246,7 +248,7 @@ For each condition, reading the query yields one of:
 | **value == literal** | query resolves to the exact literal | condition holds |
 | **value != literal** | query resolves to a different value | condition fails ⇒ variant does not match |
 | **missing** | query resolves to nothing (incl. a shape mismatch) | condition fails ⇒ variant does not match (**not** an error) |
-| **blocked** | query touches a still-unresolved marker | variant selection is **deferred** and retried later |
+| **blocked** | query touches a still-unresolved marker | variant selection is **deferred** and retried later, unless another condition fails |
 
 A selector reading a value that does not exist yet is normal — the
 variant simply does not match. This differs from inputs, where a missing
@@ -254,21 +256,24 @@ value without a default **is** an error (§5.4).
 
 ### 4.4 Specificity
 
-`specificity = number of conditions`. The base variant (empty selector)
-has specificity 0. More conditions ⇒ more specific ⇒ wins (§10),
-whatever the variant's `priority` or `when`.
+`specificity = number of selector conditions`. The base variant (empty
+selector and scope) has specificity 0. More selector conditions ⇒ more
+specific ⇒ wins (§10), whatever the variant's `scope`, `priority` or
+`when`.
 
-A variant's **rank** compares three values, in this order:
+A variant's **rank** compares four values, in this order:
 
-1. specificity (more conditions win outright),
-2. `priority` (higher wins; default 0),
-3. `when` (a variant with one beats one without, §4.6).
+1. specificity (more selector conditions win outright),
+2. scope depth — the number of `scope` conditions (narrower wins, §4.7),
+3. `priority` (higher wins; default 0),
+4. `when` (a variant with one beats one without, §4.6).
 
 If two matching variants share the highest rank, that is an **error**,
-not a guess (§10) — make one more specific or give it a higher
-`priority`. The `AmbiguousVariantException` names the shared
-specificity and, when not 0, the priority. With every `priority` at 0
-the rank is specificity, then `when`.
+not a guess (§10) — make one more specific, narrow its scope, or give
+it a higher `priority`. The `AmbiguousVariantException` names the
+shared specificity and, when not 0, the scope depth and the priority.
+Without scopes and with every `priority` at 0 the rank is specificity,
+then `when`.
 
 ### 4.5 Selector patterns
 
@@ -309,10 +314,11 @@ evaluate to **bool**. A variant applies when its selector matches
   Declare every identifier the predicate uses there (§5). A blocked
   input defers the variant; a missing one without a default is an
   error; a non-bool result is an error.
-- **Rank (§4.4):** more selector conditions always win, then the higher
-  `priority`; a `when` only breaks ties among variants with the *same*
-  condition count and priority — so a `when`-variant outranks the
-  otherwise-identical one, including the base.
+- **Rank (§4.4):** more selector conditions always win, then the
+  narrower scope, then the higher `priority`; a `when` only breaks ties
+  among variants with the *same* condition count, scope depth and
+  priority — so a `when`-variant outranks the otherwise-identical one,
+  including the base.
 - **OR / ranges for free:** `when: "a || b"`, `"h >= 3.0 && h < 9.0"`,
   `"!premium"`. No separate OR selector syntax exists — use `||`.
 - **Mutual exclusion matters.** Because a same-rank tie is an
@@ -325,6 +331,28 @@ evaluate to **bool**. A variant applies when its selector matches
 Prefer plain equality selectors when they suffice — they are simpler
 and statically analyzable; reach for `when` only for the logic
 equality can't express.
+
+### 4.7 Scope — *where* a variant applies
+
+A `scope` is written exactly like a selector, and both must match. The
+selector says *which case* a variant answers, the scope *where* it
+applies. For the same case the narrower scope (more scope conditions)
+wins; a more specific case (more selector conditions) wins over any
+scope. `priority` only orders variants whose scopes have the same depth.
+
+```jsonc
+{
+  "selector": { "theme#id": "dark" },               // the case
+  "scope":    { "#team": "a", "#project": "x" },    // where it applies
+  "expression": "4.0"
+}
+```
+
+A query may be in the selector or in the scope, not in both
+(`SchemaException`). A scope condition fails, matches and blocks like a
+selector condition (§4.3); a failure or block message names the scope.
+A failing condition wins over a blocked one, in the selector and the
+scope alike: a variant whose conditions fail never waits.
 
 ---
 
@@ -632,8 +660,8 @@ changes that outcome to **removal**:
 - Inside a **list**: the element is set to `null`.
 
 Use `optional` when "produce nothing here" is a legitimate outcome.
-Otherwise always provide a base variant (a selector-less variant) so
-every node resolves.
+Otherwise always provide a base variant (a variant without selector or
+scope) so every node resolves.
 
 ---
 
@@ -716,19 +744,20 @@ A marker may sit **at any depth** inside a node's data:
 
 When a reference resolves, the rule picks one variant at the node:
 
-1. **Evaluate every variant's selector** at the node; for a matching
-   selector, also evaluate its `when` predicate (§4.6). A variant
-   **applies** when both hold.
+1. **Evaluate every variant's selector and scope** at the node; when
+   both match, also evaluate its `when` predicate (§4.6). A variant
+   **applies** when all of them hold.
 2. Among the variants that **apply**, choose the one with the highest
    **rank** (§4.4): more selector conditions win outright; at equal
-   counts the higher `priority` wins; at equal counts and priority a
-   `when` wins (so a `when`-variant beats the otherwise-identical one,
+   counts the narrower scope wins; then the higher `priority`; then a
+   `when` (so a `when`-variant beats the otherwise-identical one,
    including the base).
 3. **Ties** (two or more apply at the same, highest rank) → an
    **error** (`AmbiguousVariantException`). The resolver never picks by
-   order; make a selector or `when` more specific, or give one variant
-   a higher `priority`, so exactly one variant applies. This holds
-   within one book and across merged books alike (§11).
+   order; make a selector or `when` more specific, narrow a scope, or
+   give one variant a higher `priority`, so exactly one variant
+   applies. This holds within one book and across merged books alike
+   (§11).
 4. If a still-blocked variant *could* win or tie once resolved, the
    item is **deferred** and retried after more resolution.
 5. If **no** variant matches:
@@ -747,31 +776,42 @@ key. Merge order never decides which variant wins: the rank does
 (§10), and a tie is an **error** (§10.3).
 
 Layered books (e.g. `default → team → project`, each one overriding
-the one before) therefore use `priority`:
+the one before) therefore use `scope` (§4.7):
 
-- **One priority per layer.** Give every variant of a layer the same
-  `priority`, higher for a higher layer (e.g. 0, 1, 2). For the same
-  case — the same selector conditions — the higher layer wins, with or
-  without a `when`.
-- **The same selector keys for the same case.** More conditions win
-  whatever the layer, so a lower layer's variant with more conditions
-  still beats a higher layer's. To override a case, a higher layer
-  repeats its selector keys (or adds more).
+- **One scope per layer.** Give every variant of a layer the layer's
+  scope, one level deeper than the layer below: none for the default,
+  `{"#team": "a"}` for the team, `{"#team": "a", "#project": "x"}` for
+  the project. For the same case — the same selector conditions — the
+  deeper layer wins, with or without a `when`.
+- **The same selector keys for the same case.** More selector
+  conditions win whatever the scope, so a lower layer's variant with
+  more conditions still beats a higher layer's. To override a case, a
+  higher layer repeats its selector keys (or adds more).
+- **Priority only for equal depth.** Layers whose scopes have the same
+  number of conditions are ordered by `priority` (§4.4).
+- The layers may also live in one book; nothing changes.
 - Conflicting rule-level `optional` or `resultType` across books for the
   same key → `SchemaException`. (`null`/absent defers to the other
   book's value.)
 
 ```jsonc
-// default book (layer 0)
+// default book
 "borderWidth": [
   { "expression": "1.0" },
   { "selector": { "theme#id": "dark" }, "expression": "2.0" }
 ]
-// project book (layer 1)
+// team book
 "borderWidth": [
-  { "selector": { "theme#id": "dark" }, "priority": 1, "expression": "3.0" }
+  { "selector": { "theme#id": "dark" }, "scope": { "#team": "a" },
+    "expression": "3.0" }
 ]
-// merged, in any order: dark theme → 3.0, elsewhere → 1.0
+// project book
+"borderWidth": [
+  { "selector": { "theme#id": "dark" },
+    "scope": { "#team": "a", "#project": "x" }, "expression": "4.0" }
+]
+// merged, in any order, dark theme: 4.0 in project x of team a,
+// 3.0 elsewhere in team a, 2.0 elsewhere; any other theme: 1.0
 ```
 
 ---
@@ -833,14 +873,15 @@ them. Failures are typed subclasses of `TreeExpressionsException`.
       `number|string|bool|list|map`.
 
 **Variants**
-- [ ] Only `selector` / `when` / `priority` / `inputs` / `expression` /
-      `value` / `description`.
+- [ ] Only `selector` / `scope` / `when` / `priority` / `inputs` /
+      `expression` / `value` / `description`.
 - [ ] Exactly one of `expression` (present, non-empty) or `value`
       (non-null JSON, no `§`-prefixed map key anywhere inside).
 - [ ] `priority`, if present, is an integer ≥ 0.
 - [ ] `description`, if present, is a string.
+- [ ] No query is in both `selector` and `scope`.
 
-**Selectors**
+**Selectors and scopes**
 - [ ] Keys are valid one-`#` queries.
 - [ ] Values are string / number / bool (never `null`, object, array).
 
@@ -878,8 +919,8 @@ them. Failures are typed subclasses of `TreeExpressionsException`.
 
 `RuleBook.lint()` additionally flags *legal but suspicious* setups:
 identical rules under two names, duplicate selectors (with the same
-`when` and `priority`) within one rule, and non-optional rules without
-a base variant.
+scope, `when` and `priority`) within one rule, and non-optional rules
+without a base variant.
 
 ---
 
@@ -1336,7 +1377,8 @@ Semantics authors rely on:
 
 - **No matching variant ⇒ the rule simply does not apply** at that node.
   Every rule is implicitly optional here (`optional` is irrelevant), so a
-  rule without a base variant annotates only where its selectors match.
+  rule without a base variant annotates only where its selectors and
+  scopes match.
   A base variant annotates every node.
 - **Anchor selectors with `./`.** Every node is tested, and `#kind`
   searches upward — so it also matches every *descendant* of a dialog
@@ -1373,6 +1415,7 @@ Semantics authors rely on:
 // VARIANT
 {
   "selector":    { "<query>": <string|number|bool>, ... },  // optional
+  "scope":       { "<query>": <string|number|bool>, ... },  // optional
   "when":        "<CEL bool predicate>",                    // optional
   "priority":    <integer ≥ 0>,                             // optional (0)
   "inputs":      { "<ident>": "<query>"                     // optional
