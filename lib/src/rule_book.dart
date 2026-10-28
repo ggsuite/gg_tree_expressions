@@ -115,18 +115,22 @@ class RuleBook {
         }
       }
 
-      // Identical selector, `when` and priority within one rule.
+      // Identical selector, scope, `when` and priority within one rule.
       for (var i = 0; i < rule.variants.length; i++) {
         for (var j = i + 1; j < rule.variants.length; j++) {
           final vi = rule.variants[i];
           final vj = rule.variants[j];
           if (deeplEquals(vi.selector.toJson(), vj.selector.toJson()) &&
+              deeplEquals(vi.scope.toJson(), vj.scope.toJson()) &&
               vi.when == vj.when &&
               vi.priority == vj.priority) {
             final also = vi.when == null ? '' : ' and `when` predicates';
+            final scoped = vi.scope.conditions.isEmpty
+                ? ''
+                : ' in the same scope';
             findings.add(
               'Rule "${rule.key}": variants $i and $j have identical '
-              'selectors$also — a node matching them resolves '
+              'selectors$also$scoped — a node matching them resolves '
               'ambiguously.',
             );
           }
@@ -134,7 +138,9 @@ class RuleBook {
       }
 
       // No base variant.
-      final hasBase = rule.variants.any((v) => v.selector.conditions.isEmpty);
+      final hasBase = rule.variants.any(
+        (v) => v.selector.conditions.isEmpty && v.scope.conditions.isEmpty,
+      );
       if (!hasBase && !rule.isOptional) {
         findings.add(
           'Rule "${rule.key}" has no base variant and is not '

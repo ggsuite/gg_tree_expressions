@@ -6,12 +6,12 @@ rules whose CEL expressions evaluate in node context; one
 (ggsuite), no domain-specific dependencies.
 
 **Read `doc/architecture.md` first** — §12 has the decision log
-(D1–D18), §13 the implementation decisions, corrections, and the
+(D1–D19), §13 the implementation decisions, corrections, and the
 post-review revisions (§13.4 review fixes, §13.5/§13.6 format
 revisions, §13.7 ambiguous-tie error, §13.8 `when` predicate, §13.9
 `value` variants + annotation books, §13.10 caller context, §13.11
 partial resolution `where:` + adopt-only-changed, §13.12 variant
-priority, §13.13 cel 0.6.0).
+priority, §13.13 cel 0.6.0, §13.14 variant scope).
 Do not trust older material (an older internal blog post,
 pre-§13.5 docs): it shows `"§name"` **string** references, which no
 longer exist. Pre-§13.6 material keys rules with a leading `§`
@@ -32,19 +32,23 @@ identifiers.
   `isPending` predicate existed briefly and was deliberately
   removed).
 - Selection: the highest-ranked matching variant wins. Rank = selector
-  condition count, then `priority` (§13.12, integer ≥ 0, default
-  0), then `when` over none. A same-rank tie among matches is an
-  `AmbiguousVariantException` (no order-based tie-break — D2 reversed
-  by D13/§13.7, so authors must disambiguate). Priority is for layered
-  books: merge order never decides; a higher layer wins the same case
-  through a higher priority. Priority 0 is omitted from
-  `RuleVariant.toJson`, `ProvenanceEntry.toJson`/`toString` and error
-  messages, so priority-free books behave exactly as before.
+  condition count, then `scope` condition count (§13.14), then
+  `priority` (§13.12, integer ≥ 0, default 0), then `when` over none.
+  A same-rank tie among matches is an `AmbiguousVariantException` (no
+  order-based tie-break — D2 reversed by D13/§13.7, so authors must
+  disambiguate). A `scope` is written like a selector and must match
+  too: the selector is the case, the scope where it applies. Layered
+  books use scopes: merge order never decides; for the same case the
+  narrower scope wins, a more specific case wins over any scope, and
+  priority only orders scopes of equal depth. A base variant has
+  neither selector nor scope. An empty scope and priority 0 are omitted
+  from `RuleVariant.toJson`, `ProvenanceEntry.toJson`/`toString` and
+  error messages, so books without them behave exactly as before.
 - Variant `when` (§13.8): an optional CEL bool predicate beside the
   equality `selector`; both must hold. It breaks ties among variants
-  with the same condition count and priority (so it beats a base of the
-  same priority); it gives ranges/OR that equality can't. Shares the
-  variant's `inputs`; `when`-free books behave exactly as before.
+  with the same condition count, scope and priority (so it beats a base
+  of the same priority); it gives ranges/OR that equality can't. Shares
+  the variant's `inputs`; `when`-free books behave exactly as before.
 - A variant has exactly one of `expression` (CEL) or `value` (§13.9): a
   non-null, **marker-free** JSON literal, deep-copied on every use
   (never hand out the book's instance). No inputs are bound for a value
@@ -167,9 +171,9 @@ identifiers.
   {inPlace, rich})` returns `(Tree<T>, ResolutionReport)`; `resolve()` is
   untouched (the tree stays clean — no sidecar keys, so all invariants
   hold). Report is minimal by default (location, kind, rule key, variant
-  index, value); `rich: true` adds the winning selector, its `when`
-  predicate and priority, bound inputs, expression source, and alias
-  chain. One entry per alias hop.
+  index, value); `rich: true` adds the winning selector, its scope, its
+  `when` predicate and priority, bound inputs, expression source, and
+  alias chain. One entry per alias hop.
   `lib/src/resolution_report.dart` (`ResolutionReport` / `ProvenanceEntry`
   / `ProvenanceKind`). Capture is threaded via a null-gated `_Recorder`,
   so `resolve()` pays nothing.

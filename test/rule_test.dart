@@ -553,6 +553,225 @@ void main() {
         });
         expect((rule.select(me) as SelectMatch).index, 1);
       });
+
+      // ---- scope ----
+
+      int winner(Rule rule, Json data, {WhenEvaluator? evaluateWhen}) =>
+          (rule.select(
+            node('me', data),
+            evaluateWhen: evaluateWhen,
+          ) as SelectMatch).index;
+
+      test('should skip a variant whose scope fails, naming the scope', () {
+        final rule = Rule.fromJson('w', [
+          {
+            'scope': {'#team': 'a'},
+            'expression': 'team',
+          },
+          {
+            'selector': {'#kind': 'dialog'},
+            'scope': {'#team': 'a'},
+            'expression': 'team dialog',
+          },
+          {
+            'selector': {'#kind': 'list'},
+            'expression': 'list',
+          },
+        ]);
+        final result = rule.select(node('me', {'team': 'b', 'kind': 'dialog'}));
+        expect((result as SelectNone).reasons, [
+          'variant 0: scope condition "#team == a" failed: found "b"',
+          'variant 1: scope condition "#team == a" failed: found "b"',
+          'variant 2: condition "#kind == list" failed: found "dialog"',
+        ]);
+      });
+
+      test('should let the narrower scope win the same case', () {
+        final rule = Rule.fromJson('w', [
+          {'expression': 'default'},
+          {
+            'scope': {'#team': 'a'},
+            'expression': 'team',
+          },
+          {
+            'scope': {'#team': 'a', '#project': 'x'},
+            'expression': 'project',
+          },
+        ]);
+        expect(winner(rule, {}), 0);
+        expect(winner(rule, {'team': 'a'}), 1);
+        expect(winner(rule, {'team': 'a', 'project': 'x'}), 2);
+      });
+
+      test('should rank a more specific case over a narrower scope', () {
+        final rule = Rule.fromJson('w', [
+          {
+            'scope': {'#team': 'a', '#project': 'x', '#stage': 'beta'},
+            'expression': 'plain',
+          },
+          {
+            'selector': {'#kind': 'dialog'},
+            'scope': {'#team': 'a'},
+            'expression': 'dialog',
+          },
+        ]);
+        final data = {
+          'team': 'a',
+          'project': 'x',
+          'stage': 'beta',
+          'kind': 'dialog',
+        };
+        expect(winner(rule, data), 1);
+      });
+
+      test('should rank scope over priority, priority within a scope', () {
+        final rule = Rule.fromJson('w', [
+          {'priority': 5, 'expression': 'default'},
+          {
+            'scope': {'#team': 'a'},
+            'expression': 'team',
+          },
+          {
+            'scope': {'#team': 'a'},
+            'priority': 1,
+            'expression': 'team, higher',
+          },
+        ]);
+        expect(winner(rule, {}), 0);
+        expect(winner(rule, {'team': 'a'}), 2);
+      });
+
+      test('should rank a narrower scope over a holding when', () {
+        final rule = Rule.fromJson('w', [
+          {'when': 'tall', 'expression': 'tall'},
+          {
+            'scope': {'#team': 'a'},
+            'expression': 'team',
+          },
+        ]);
+        final evaluateWhen = whenIs({'tall': const MatchSuccess()});
+        expect(winner(rule, {}, evaluateWhen: evaluateWhen), 0);
+        expect(winner(rule, {'team': 'a'}, evaluateWhen: evaluateWhen), 1);
+      });
+
+      test('should report a tie on all four values as ambiguous', () {
+        final rule = Rule.fromJson('w', [
+          {
+            'selector': {'#kind': 'dialog'},
+            'scope': {'#team': 'a'},
+            'priority': 1,
+            'expression': 'A',
+          },
+          {
+            'selector': {'#size': 's'},
+            'scope': {'#project': 'x'},
+            'priority': 1,
+            'expression': 'B',
+          },
+          {
+            'selector': {'#kind': 'dialog'},
+            'priority': 1,
+            'expression': 'C',
+          },
+        ]);
+        final result = rule.select(
+          node('me', {
+            'kind': 'dialog',
+            'size': 's',
+            'team': 'a',
+            'project': 'x',
+          }),
+        );
+        final ambiguous = result as SelectAmbiguous;
+        expect(ambiguous.specificity, 1);
+        expect(ambiguous.scopeDepth, 1);
+        expect(ambiguous.priority, 1);
+        expect(ambiguous.matches.map((m) => m.index), [0, 1]);
+      });
+
+      test('should defer on a blocked scope that can still win', () {
+        final rule = Rule.fromJson('w', [
+          {'expression': 'default'},
+          {
+            'scope': {'#team': 'a'},
+            'expression': 'team',
+          },
+        ]);
+        final me = node('me', {
+          'team': const {'§': 'x'},
+        });
+        final blocked = rule.select(me) as SelectBlocked;
+        expect(blocked.query, '#team');
+        expect(blocked.blocker, '/#team');
+        expect(blocked.inScope, isTrue);
+      });
+
+      test('should report a selector block before a scope block', () {
+        final rule = Rule.fromJson('w', [
+          {
+            'selector': {'#kind': 'dialog'},
+            'scope': {'#team': 'a'},
+            'expression': 'team dialog',
+          },
+        ]);
+        final me = node('me', {
+          'kind': const {'§': 'x'},
+          'team': const {'§': 'y'},
+        });
+        final blocked = rule.select(me) as SelectBlocked;
+        expect(blocked.query, '#kind');
+        expect(blocked.inScope, isFalse);
+      });
+
+      test('should let a failure win over a block, selector first', () {
+        final rule = Rule.fromJson('w', [
+          {
+            'selector': {'#kind': 'dialog'},
+            'scope': {'#team': 'a'},
+            'expression': 'blocked selector, failed scope',
+          },
+          {
+            'selector': {'#size': 's'},
+            'scope': {'#project': 'x'},
+            'expression': 'failed selector, blocked scope',
+          },
+          {
+            'selector': {'#size': 's'},
+            'scope': {'#team': 'a'},
+            'expression': 'failed selector, failed scope',
+          },
+        ]);
+        final me = node('me', {
+          'kind': const {'§': 'x'},
+          'project': const {'§': 'y'},
+          'size': 'm',
+          'team': 'b',
+        });
+        expect((rule.select(me) as SelectNone).reasons, [
+          'variant 0: scope condition "#team == a" failed: found "b"',
+          'variant 1: condition "#size == s" failed: found "m"',
+          'variant 2: condition "#size == s" failed: found "m"',
+        ]);
+      });
+
+      test('should ignore a blocked scope in a dominated tier', () {
+        final rule = Rule.fromJson('w', [
+          {
+            'scope': {'#unresolved': 1},
+            'expression': 'U',
+          },
+          {
+            'scope': {'#team': 'a', '#project': 'x'},
+            'expression': 'project',
+          },
+        ]);
+        final data = {
+          'unresolved': const {'§': 'x'},
+          'team': 'a',
+          'project': 'x',
+        };
+        expect(winner(rule, data), 1);
+      });
     });
 
     group('merged()', () {

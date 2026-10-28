@@ -464,6 +464,52 @@ void main() {
         expect(book(1).lint().single, contains('variants 1 and 2'));
       });
 
+      test('should flag identical selectors only in the same scope', () {
+        RuleBook book(String secondTeam) => RuleBook.fromJson({
+          'width': [
+            {'expression': '0'},
+            {
+              'selector': {'#size': 'small'},
+              'scope': {'#team': 'a'},
+              'expression': '1',
+            },
+            {
+              'selector': {'#size': 'small'},
+              'scope': {'#team': secondTeam},
+              'expression': '2',
+            },
+          ],
+        });
+
+        expect(book('b').lint(), isEmpty);
+        expect(
+          book('a').lint().single,
+          'Rule "width": variants 1 and 2 have identical selectors in the '
+          'same scope — a node matching them resolves ambiguously.',
+        );
+      });
+
+      test('should not count a scoped variant as a base variant', () {
+        RuleBook book(List<Json> variants) =>
+            RuleBook.fromJson({'width': variants});
+        final scoped = {
+          'scope': {'#team': 'a'},
+          'expression': '1',
+        };
+
+        expect(
+          book([scoped]).lint().single,
+          contains('Rule "width" has no base variant and is not optional'),
+        );
+        expect(
+          book([
+            scoped,
+            {'expression': '0'},
+          ]).lint(),
+          isEmpty,
+        );
+      });
+
       test('should report non-optional rules without a base variant', () {
         final book = RuleBook.fromJson(<String, dynamic>{
           'dialogWidth': [

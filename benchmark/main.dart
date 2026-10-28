@@ -169,8 +169,8 @@ class _Profile {
 }
 
 List<_Profile> _profiles() => [
-  _slotTreeLike('slotTreeLike/255', depth: 7, branching: 2, rules: 30),
-  _slotTreeLike('slotTreeLike/1093', depth: 6, branching: 3, rules: 30),
+  _layeredTreeLike('layeredTreeLike/255', depth: 7, branching: 2, rules: 30),
+  _layeredTreeLike('layeredTreeLike/1093', depth: 6, branching: 3, rules: 30),
   _denseRefs('denseRefs/511', depth: 8, branching: 2),
   _deepChain('deepChain/8', length: 8),
   _deepChain('deepChain/32', length: 32),
@@ -211,13 +211,13 @@ void _runEndToEnd(_Profile p, {required int warmup, required int runs}) {
 // ...........................................................................
 // Profile builders
 
-_Profile _slotTreeLike(
+_Profile _layeredTreeLike(
   String name, {
   required int depth,
   required int branching,
   required int rules,
 }) {
-  final book = RuleBook.fromJson(_slotBook(rules));
+  final book = RuleBook.fromJson(_layeredBook(rules));
   final rnd = Random(0x51013 + depth);
   var index = 0;
   Json rootData() => <String, dynamic>{
@@ -247,7 +247,7 @@ _Profile _slotTreeLike(
 
 _Profile _denseRefs(String name, {required int depth, required int branching}) {
   const rules = 20;
-  final book = RuleBook.fromJson(_slotBook(rules));
+  final book = RuleBook.fromJson(_layeredBook(rules));
   final rnd = Random(0xDE45E);
   var index = 0;
   Json dataFor(int d) {
@@ -408,7 +408,7 @@ _Profile _bigValues(String name, {required int entries, required int refs}) {
 
 void _runGrowLoop({required int warmup, required int runs}) {
   const rules = 20;
-  final book = RuleBook.fromJson(_slotBook(rules));
+  final book = RuleBook.fromJson(_layeredBook(rules));
   final resolver = Resolver(ruleBook: book);
   final rnd = Random(0x9807);
   var index = 0;
@@ -483,7 +483,7 @@ void _runGrowLoop({required int warmup, required int runs}) {
 
 void _runConstruction({required int warmup, required int runs}) {
   final books = <String, Json>{
-    'slotBook/30': _slotBook(30),
+    'layeredBook/30': _layeredBook(30),
     'wideBook/500': _wideBookJson(500, 16),
   };
   for (final MapEntry(:key, :value) in books.entries) {
@@ -501,8 +501,8 @@ void _runConstruction({required int warmup, required int runs}) {
       runs: runs,
     );
 
-    // Warm: a shared, pre-filled cache — the Resolver-per-fit consumer
-    // scenario (one cache, many resolvers over the same book).
+    // Warm: a shared, pre-filled cache — one resolver per resolve run
+    // (one cache, many resolvers over the same book).
     final shared = <String, CompiledExpression>{};
     Resolver(ruleBook: parsed, expressionCache: shared);
     final warm = _bench<RuleBook>(
@@ -634,7 +634,7 @@ Tree<Json> _buildTree({
   return build(0);
 }
 
-Json _slotBook(int rules) {
+Json _layeredBook(int rules) {
   final book = <String, dynamic>{};
   for (var i = 0; i < rules; i++) {
     book['r$i'] = [

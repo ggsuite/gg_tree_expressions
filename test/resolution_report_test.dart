@@ -65,6 +65,26 @@ void main() {
         );
       });
 
+      test('should render a scope only when it is not empty', () {
+        ProvenanceEntry withScope(Map<String, Object> scope) => ProvenanceEntry(
+          location: '/d#w',
+          kind: ProvenanceKind.rule,
+          ruleKey: 'w',
+          variantIndex: 1,
+          value: 3.0,
+          selector: const {'#kind': 'dialog'},
+          scope: scope,
+        );
+        expect(
+          withScope(const {'#team': 'a'}).toString(),
+          '/d#w ← w[1] = 3.0  {selector {#kind: dialog}; scope {#team: a}}',
+        );
+        expect(
+          withScope(const {}).toString(),
+          '/d#w ← w[1] = 3.0  {selector {#kind: dialog}}',
+        );
+      });
+
       test('should skip empty selector/inputs and single-key chain', () {
         const e = ProvenanceEntry(
           location: '/n#v',
@@ -154,6 +174,32 @@ void main() {
           'aliasChain',
         ]);
         expect(withPriority(0).toJson().containsKey('priority'), isFalse);
+      });
+
+      test('should serialize a scope after the selector, not when empty', () {
+        ProvenanceEntry withScope(Map<String, Object> scope) => ProvenanceEntry(
+          location: '/d#w',
+          kind: ProvenanceKind.rule,
+          ruleKey: 'w',
+          variantIndex: 1,
+          value: 3.0,
+          selector: const {},
+          scope: scope,
+          when: 'x > 1.0',
+        );
+        final json = withScope(const {'#team': 'a'}).toJson();
+        expect(json.keys, [
+          'location',
+          'kind',
+          'ruleKey',
+          'variantIndex',
+          'value',
+          'selector',
+          'scope',
+          'when',
+        ]);
+        expect(json['scope'], {'#team': 'a'});
+        expect(withScope(const {}).toJson().containsKey('scope'), isFalse);
       });
 
       test('should omit null rich fields (minimal rule)', () {

@@ -109,9 +109,10 @@ plain concatenation per key.
 |---|---|---|---|
 | `expression` | string (CEL) | one of `expression` / `value` | Computes the rule result from the bound inputs. |
 | `value` | any non-null JSON | one of `expression` / `value` | A literal result, deep-copied on every use. Must not contain a marker (a map with a `§`-prefixed key). Both or neither of `expression`/`value` is a `SchemaException`. See §13.9. |
-| `selector` | object: treeQuery → literal | no | Equality conditions for this variant to apply. Absent/empty = base variant. |
+| `selector` | object: treeQuery → literal | no | Equality conditions for this variant to apply. Absent/empty, with an empty `scope` = base variant. |
+| `scope` | object: treeQuery → literal | no | Equality conditions like `selector` for where the variant applies; both must match. Ranks after the selector-condition count and before `priority` (§4.4, §13.14). |
 | `when` | string (CEL) | no | A predicate (must evaluate to bool) that must also hold for the variant to apply. Reads tree values through the same `inputs` as `expression`; enables ranges/comparisons/OR that equality selectors cannot. See §4.4 for specificity, §13.8. |
-| `priority` | integer ≥ 0 | no | Default 0. Ranks the variant after the selector-condition count and before `when` (§4.4, §13.12). |
+| `priority` | integer ≥ 0 | no | Default 0. Ranks the variant after the selector- and scope-condition counts and before `when` (§4.4, §13.12). |
 | `inputs` | object: identifier → query or `{context}` | no | Binds CEL identifiers to tree queries (or, long form, to a path into the resolver's caller context, §13.10), shared by `when` and `expression`. Identifier must be a valid CEL identifier; query uses `gg_tree` query syntax. |
 | `description` | string | no | Documentation only. |
 
@@ -151,24 +152,27 @@ An input may instead read the resolver's read-only caller context with
 When several variants of the same rule match a node:
 
 1. **Rank wins**: the variant with the highest rank is chosen. Ranks
-   compare the selector-condition count (specificity), then `priority`
-   (§13.12), then `when` presence. So more selector conditions win
-   outright (CSS-like), a higher `priority` wins among equal counts, and
-   a `when` breaks the remaining ties (a `when`-variant beats the
-   otherwise-identical one, including the base). Base variant has
-   specificity 0. For books without `when` and `priority` this is
-   exactly the old condition-count order (§13.8).
+   compare the selector-condition count (specificity), then the
+   scope-condition count (§13.14), then `priority` (§13.12), then
+   `when` presence. So more selector conditions win outright
+   (CSS-like), a narrower scope wins among equal counts, a higher
+   `priority` among equal scopes, and a `when` breaks the remaining ties
+   (a `when`-variant beats the otherwise-identical one, including the
+   base). Base variant has specificity 0. For books without `scope`,
+   `when` and `priority` this is exactly the old condition-count order
+   (§13.8).
 2. **Ties are an error**: if two or more variants match at that same
    highest rank, resolution fails with an
    `AmbiguousVariantException` naming the rule, node, specificity,
-   priority (when not 0), and the tied variants. The resolver never
-   guesses by order — selectors must be specific enough, or one variant
-   must have a higher `priority`, so that exactly one wins. (Supersedes
-   the original "later wins" tie-break of D2; see §13.7.)
+   scope and priority (when not 0), and the tied variants. The resolver
+   never guesses by order — selectors must be specific enough, or one
+   variant must have a narrower scope or a higher `priority`, so that
+   exactly one wins. (Supersedes the original "later wins" tie-break of
+   D2; see §13.7.)
 
-If **no** variant matches (all variants carry selectors, none applies),
-resolution fails with a diagnostic listing the rule, node path, and the
-selectors that were tried. Authors are encouraged to always provide a
+If **no** variant matches (all variants carry selectors or scopes, none
+applies), resolution fails with a diagnostic listing the rule, node
+path, and the selectors that were tried. Authors are encouraged to always provide a
 base variant. (An `optional` flag is an open question, §11.)
 
 ### 4.5 References in tree data
@@ -377,8 +381,9 @@ Notes:
   directly, which also covers references inside lists (where
   path-based `set` has no index syntax).
 - `RuleBook.merge` concatenates books; order never decides between
-  variants — a later book overrides the same case through a higher
-  `priority`, and a same-rank tie is an error (§4.4/§13.7/§13.12).
+  variants — a later book overrides the same case through a narrower
+  `scope` or a higher `priority`, and a same-rank tie is an error
+  (§4.4/§13.7/§13.12/§13.14).
 - `resolveRule` exists for tooling and tests (evaluate one rule at one
   node without a tree sweep).
 
@@ -439,8 +444,8 @@ this lives in this repository:
   before steps that consume the resolved variables. A step that must
   mutate the tree it is handed yet stay all-or-nothing on error uses
   `Resolver.resolveAtomic(tree)` (added 2026-07-10): it resolves a copy
-  and writes the result back only on success, so a failed fit leaves
-  the tree untouched. Feasible because resolution only ever changes
+  and writes the result back only on success, so a failed resolution
+  leaves the tree untouched. Feasible because resolution only ever changes
   node data, never structure.
 - **Growth instructions.** A rule may return structured JSON (e.g.
   `{"add": "tab", "count": 2}`). A consumer step interprets
@@ -530,7 +535,8 @@ depends on both.
    `(Tree<T>, ResolutionReport)`; `resolve()` is unchanged and pays
    nothing (capture is a null-gated recorder). Minimal by default
    (location, kind, rule key, variant index, value); `rich: true` adds
-   the winning selector, its `when` predicate and priority (§13.12),
+   the winning selector, scope (§13.14), its `when` predicate and
+   priority (§13.12),
    bound inputs, expression source, and alias chain. See
    `lib/src/resolution_report.dart`.
 10. **Namespacing.** Rule keys are flat camelCase. If rule books grow
@@ -553,8 +559,8 @@ depends on both.
     redundant `containsMarker` (reads −32…−42 %; validated by the
     conformance corpus at 5000 iterations + an adversarial 1.27 M-case
     differential review); (4) an injectable shared expression cache on
-    `Resolver` (warm construction −99.6 % for a Resolver-per-fit
-    consumer). Cumulative end-to-end: realistic trees −25…−41 %,
+    `Resolver` (warm construction −99.6 % for one resolver per resolve
+    run). Cumulative end-to-end: realistic trees −25…−41 %,
     wideBook −65…−72 %. Acquitted with evidence: book indexing by
     first condition (candidate 6 — `select()` reads already cached),
     `containsMarker` bookkeeping (folded into 3), and allocation trims
@@ -587,6 +593,7 @@ depends on both.
 | D16 | Rules can read read-only caller data that is not in the tree: `Resolver(context: …)` plus the `{"context": "a/b"}` input form. Out-of-band like the rule book, never modified, bound as copies; selectors stay tree-only (§13.10). | Feature request (consumer pipeline), 2026-10-02 |
 | D17 | `resolve` / `resolveVerbose` / `resolveAtomic` accept a `where` marker filter for staged resolution; selected markers pull in the unselected markers they wait for. `resolveAtomic` writes back only nodes whose data changed (§13.11). | Feature request (consumer pipeline), 2026-10-02 |
 | D18 | Optional variant `priority` (integer ≥ 0, default 0). Variants rank by selector conditions, then priority, then `when`; ties stay an error (D13). Lets layered books override the same case without order-based tie-breaking (§13.12). | Feature request (layered rule books), 2026-10-27 |
+| D19 | Optional variant `scope`: equality conditions like a selector, for where the variant applies; both must match. Variants rank by selector conditions, then scope conditions, then priority, then `when`; ties stay an error (D13). Layered books use scopes; priority only orders scopes of equal depth (§13.14). | Feature request (layered rule books), 2026-10-28 |
 
 ---
 
@@ -1158,3 +1165,51 @@ about it:
   but `compile` still rejects `size` and the JSON type adapter stays;
   neither was re-evaluated here. 0.5.5 lets `&&` / `||` absorb an error
   from the operand that does not decide the result.
+
+### 13.14 Feature: variant scope (2026-10-28)
+
+A variant may carry an optional `scope`: equality conditions written
+exactly like a `selector`. The variant applies only where its selector,
+its scope and its `when` all hold.
+
+- **Scope vs selector.** The selector says *which case* a variant
+  answers, the scope *where* it applies — say a default book without
+  scope, a team book with `{"#team": "a"}`, a project book with
+  `{"#team": "a", "#project": "x"}`. A query may not be in both.
+- **The rank.** `Rule.select` compares four values, highest first: the
+  selector-condition count, the scope-condition count, `priority`, and
+  `when` presence. A more specific case wins whatever its scope; for the
+  same case the narrower scope wins. The tier walk of §13.8 is
+  unchanged; a scope condition fails, matches and blocks like a
+  selector condition, and a failure reason or a block names the scope.
+  A failing condition wins over a blocked one, in the selector and the
+  scope alike, so a variant whose conditions fail never defers
+  selection.
+- **Where scope ranks.** After the case, so a narrower scope never hides
+  a more specific case written lower down; before `priority` and
+  `when`, so a deeper layer replaces all of a shallower layer's
+  variants of the same case, with or without a `when`.
+- **Priority's remaining role.** It only orders variants whose scopes
+  have the same depth. Layered books use scopes instead of one priority
+  per layer (§13.12), and the layers may live in one book.
+- **Ties still error (D13).** Equal on all four values is an
+  `AmbiguousVariantException`. It and `SelectAmbiguous` carry the
+  shared scope count as `scopeDepth`; the message names it, and each
+  tied variant's scope, only when not 0. `RuleBook.lint()` flags identical
+  selectors only in the same scope. A base variant has neither selector
+  nor scope conditions.
+- **Backward compatible.** Without scopes the ranking, JSON, reports and
+  goldens are those of §13.12. An empty scope is omitted from
+  `RuleVariant.toJson`, error messages and `ProvenanceEntry.toJson` /
+  `toString`. Two messages change for every book: the unknown-key error
+  of a variant lists `scope` among the allowed keys, and the NoVariant
+  hint reads "Add a base variant (without selector or scope) or mark the
+  rule as optional."
+- **Behaviour change: failures before blocks.** `Selector.match` used to
+  return the first blocked condition even when a later one failed, so a
+  variant whose conditions fail could wait for a blocked one, and two
+  rules could wait on each other. It now checks every condition and a
+  failure wins. Results only change from stuck to resolved.
+- **Revises §13.12's last point.** A book can now tie its variants to a
+  part of the tree through their scopes. Scopes, like selectors, read
+  the tree only (§13.10).

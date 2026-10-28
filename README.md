@@ -62,22 +62,27 @@ void main() {
 |---|---|
 | Reference | A map value `{"§": "ruleName"}` in tree data. Replaced by the rule's result at its exact location — also inside nested maps and lists. |
 | Rule | A named list of variants under a rule key like `"borderWidth"`. |
-| Variant | Optional `selector`, optional `when` predicate, optional `priority`, optional `inputs`, and either one CEL `expression` or one literal `value`. |
-| Selector | Conditions `treeQuery == literal`, all of which must hold. |
+| Variant | Optional `selector`, optional `scope`, optional `when` predicate, optional `priority`, optional `inputs`, and either one CEL `expression` or one literal `value`. |
+| Selector | Conditions `treeQuery == literal`, all of which must hold: the case a variant answers. |
+| Scope | Conditions written like a selector that must also hold: where a variant applies (e.g. a team or a project). |
 | Inputs | Explicit bindings from CEL identifiers to tree queries (evaluated from the node holding the reference) or to paths into the resolver's read-only caller context. |
 
 ### Precedence
 
 The variant with the highest **rank** wins. Ranks compare the number of
-selector conditions (more win outright, CSS-like), then the variant's
-optional `priority` (default 0), then a `when` predicate over none. If
-two or more variants match at that same rank, resolution fails with an
-`AmbiguousVariantException` — ties are an error, never broken by order,
-so make selectors specific enough that exactly one wins.
+selector conditions (more win outright, CSS-like), then the number of
+`scope` conditions, then the variant's optional `priority` (default 0),
+then a `when` predicate over none. If two or more variants match at
+that same rank, resolution fails with an `AmbiguousVariantException` —
+ties are an error, never broken by order, so make selectors specific
+enough that exactly one wins.
 `RuleBook.merge` concatenates books (e.g. default → team → project);
 to let a higher layer override the same case, give its variants a
-higher `priority`. If no variant matches, resolution fails with the
-per-variant reasons — unless the rule is `optional` (see below).
+narrower scope — `{"#team": "a"}` for the team, `{"#team": "a",
+"#project": "x"}` for the project. A more specific case still wins over
+any scope; `priority` only orders scopes of equal depth. If no variant
+matches, resolution fails with the per-variant reasons — unless the
+rule is `optional` (see below).
 
 ### Complex conditions with `when`
 
@@ -263,9 +268,9 @@ print(report);
 Each `ProvenanceEntry` carries, at minimum, the `location`, the `kind`
 (`rule` / `inline` / `optionalRemoval`), the `ruleKey`, the
 `variantIndex`, and the `value`. Pass `rich: true` to also capture the
-winning variant's `selector`, its `when` predicate (if any), its
-`priority` (shown when not 0), the bound `inputs`, the `expression`
-source, and the `aliasChain`. A location
+winning variant's `selector`, its `scope` (shown when not empty), its
+`when` predicate (if any), its `priority` (shown when not 0), the bound
+`inputs`, the `expression` source, and the `aliasChain`. A location
 appears once per alias hop.
 `report.at(location)` filters, and both `ResolutionReport` and
 `ProvenanceEntry` have `toJson()`. `resolve()` itself is unchanged and
@@ -298,9 +303,9 @@ All errors are subtypes of the sealed `TreeExpressionsException`
 (`SchemaException`, `ExpressionException`, `QueryException`,
 `UnknownRuleException`, `CircularAliasException`,
 `NoVariantException`, `AmbiguousVariantException` (with the tied
-variants' `specificity` and `priority`), `MissingInputException`,
-`StuckException`, `ResolveException`) carrying typed fields — catch
-categories instead of parsing messages.
+variants' `specificity`, `scopeDepth` and `priority`),
+`MissingInputException`, `StuckException`, `ResolveException`)
+carrying typed fields — catch categories instead of parsing messages.
 
 Every failure names the node path, rule key, variant, and — where
 applicable — the alternatives that were considered: unknown rules get

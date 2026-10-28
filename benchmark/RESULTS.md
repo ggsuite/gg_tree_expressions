@@ -36,8 +36,8 @@ passes** (drift-cancelled):
 
 | profile | copy Δ | inPlace Δ |
 |---|--:|--:|
-| slotTreeLike/255 | −28 % | −41 % |
-| slotTreeLike/1093 | −25 % | −40 % |
+| layeredTreeLike/255 | −28 % | −41 % |
+| layeredTreeLike/1093 | −25 % | −40 % |
 | denseRefs/511 | −33 % | −35 % |
 | deepChain/8 | — | −27 % |
 | deepChain/32 | — | −22 % |
@@ -59,12 +59,12 @@ Reads (the hot loop), AOT micro, baseline → final:
 | CompiledExpression.evaluate | 199 | 195 | ~0 % (untouched) |
 | containsMarker (1000-entry, standalone) | 233580 | 199680 | ~noise |
 
-Resolver construction with a shared, pre-warmed cache (per-fit
-consumer), AOT:
+Resolver construction with a shared, pre-warmed cache (one resolver
+per resolve run), AOT:
 
 | book | cold | warm | Δ |
 |---|--:|--:|--:|
-| slotBook/30 (60 variants) | 269 µs | **1 µs** | −99.6 % |
+| layeredBook/30 (60 variants) | 269 µs | **1 µs** | −99.6 % |
 | wideBook/500 (580 variants) | 3732 µs | **14 µs** | −99.6 % |
 
 The standalone `containsMarker` micro walks the value directly and was
@@ -79,9 +79,9 @@ micro did not.
 | # | Optimization | Convicted by | Result |
 |---|---|---|---|
 | 1 | Per-select read cache | wideBook (1831 selector reads / 106 selects, ~318 distinct) | wideBook −55 % copy/inPlace; others flat |
-| 2 | Parsed-query cache | parses == reads on every profile | readQuery micro −24…−60 %; slotTreeLike/255 −17…−31 % |
-| 3 | Single-walk readQuery (folds in candidate 5) | readQuery calls == getOrNull calls everywhere; bigValues did 2 containsMarker walks/read | reads −32…−42 %; slotTreeLike inPlace −50 %; bigValues −18 % |
-| 4 | Injectable shared expression cache | construction scales with variants (Phase 1) | warm construction −99.6 % for per-fit consumers |
+| 2 | Parsed-query cache | parses == reads on every profile | readQuery micro −24…−60 %; layeredTreeLike/255 −17…−31 % |
+| 3 | Single-walk readQuery (folds in candidate 5) | readQuery calls == getOrNull calls everywhere; bigValues did 2 containsMarker walks/read | reads −32…−42 %; layeredTreeLike inPlace −50 %; bigValues −18 % |
+| 4 | Injectable shared expression cache | construction scales with variants (Phase 1) | warm construction −99.6 % for one resolver per resolve run |
 
 Details, attribution counts, and before/after numbers are in each
 commit message (`git log` on branch `Performance`).
@@ -94,7 +94,7 @@ One inPlace resolve per profile, counters since reverted:
 
 - **Reads are walked twice.** `readQueryCalls == realGetOrNull` on
   every profile (denseRefs 1033/1033, wideBook 1831/1831): the marker
-  scan and then `getOrNull` walk the identical chain. On slotTreeLike
+  scan and then `getOrNull` walk the identical chain. On layeredTreeLike
   the scan alone did ~7.5 node-visits per read (multi-seg reads climb
   to root). → opt 3.
 - **`treeQueryParses == jsonPathParses == readQueryCalls`** — every
@@ -102,11 +102,11 @@ One inPlace resolve per profile, counters since reverted:
 - **containsMarker.** bigValues did **64024 element-visits for 8
   reads** (~8000/read = two ~4000-element walks: the scan's plus the
   redundant `readQuery` safety net). Small values are cheap (224
-  visits / 96 reads on slotTreeLike). → opt 3 removes the second walk.
+  visits / 96 reads on layeredTreeLike). → opt 3 removes the second walk.
 - **Selector fan-out.** wideBook: 1831 selector reads for 106 selects
   (17.3/select) but only ~318 distinct condition queries. → opt 1.
 - **Deferral.** deepChain/32: 32 rounds, 528 step-calls, 496
-  deferrals for 32 items (16.5× re-work). The realistic slotTreeLike
+  deferrals for 32 items (16.5× re-work). The realistic layeredTreeLike
   resolved in **1 round, 0 deferrals** — deferral only bites deep
   dependency chains. (No candidate targets it; see below.)
 
@@ -136,7 +136,7 @@ One inPlace resolve per profile, counters since reverted:
   scope — resolution is mutation-based and order-sensitive within
   rounds (plan non-goal). Opts 2 and 3 still cut deepChain/32 ~22 %.
 - **`deepCopy` (copy mode):** a real but minority slice (copy − inPlace
-  ≈ 550 µs on slotTreeLike/1093); consumers that own their tree
+  ≈ 550 µs on layeredTreeLike/1093); consumers that own their tree
   already avoid it via `inPlace: true`. Not a code target.
 
 ---
@@ -149,8 +149,8 @@ One inPlace resolve per profile, counters since reverted:
 
 | profile | copy median | copy p90 | inPlace median | inPlace p90 |
 |---|--:|--:|--:|--:|
-| slotTreeLike/255 | 1087 | 1434 | 753 | 1072 |
-| slotTreeLike/1093 | 2658 | 3550 | 1826 | 2547 |
+| layeredTreeLike/255 | 1087 | 1434 | 753 | 1072 |
+| layeredTreeLike/1093 | 2658 | 3550 | 1826 | 2547 |
 | denseRefs/511 | 7228 | 8589 | 7133 | 8865 |
 | deepChain/8 | — | — | 124 | 141 |
 | deepChain/32 | — | — | 1754 | 2392 |
@@ -161,7 +161,7 @@ One inPlace resolve per profile, counters since reverted:
 
 | book | cold median |   | micro | median |
 |---|--:|---|---|--:|
-| slotBook/30 | 347 |   | readQuery own | 902 |
+| layeredBook/30 | 347 |   | readQuery own | 902 |
 | wideBook/500 | 5430 |   | Selector.match (hit) | 2955 |
 
 ### Final — all four optimizations
@@ -170,8 +170,8 @@ One inPlace resolve per profile, counters since reverted:
 
 | profile | copy median | copy p90 | inPlace median | inPlace p90 |
 |---|--:|--:|--:|--:|
-| slotTreeLike/255 | 480 | 600 | 238 | 329 |
-| slotTreeLike/1093 | 1391 | 1754 | 855 | 1066 |
+| layeredTreeLike/255 | 480 | 600 | 238 | 329 |
+| layeredTreeLike/1093 | 1391 | 1754 | 855 | 1066 |
 | denseRefs/511 | 3850 | 4428 | 3271 | 3919 |
 | deepChain/8 | — | — | 55 | 58 |
 | deepChain/32 | — | — | 1043 | 1188 |
@@ -188,7 +188,7 @@ One inPlace resolve per profile, counters since reverted:
 
 | book | rules | variants | cold median | cold p90 | warm median |
 |---|--:|--:|--:|--:|--:|
-| slotBook/30 | 30 | 60 | 269 | 308 | 1 |
+| layeredBook/30 | 30 | 60 | 269 | 308 | 1 |
 | wideBook/500 | 500 | 580 | 3732 | 4239 | 14 |
 
 #### Micro-benchmarks — median / p90 (ns per op)
