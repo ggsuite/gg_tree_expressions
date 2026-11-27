@@ -5,7 +5,7 @@ rules whose CEL expressions evaluate in node context; one
 `Resolver.resolve()` answers everything. Generic OSS package
 (ggsuite), no domain-specific dependencies.
 
-**Read `doc/architecture.md` first** — §12 has the decision log
+**Read `doc/en/architecture.md` first** — §12 has the decision log
 (D1–D19), §13 the implementation decisions, corrections, and the
 post-review revisions (§13.4 review fixes, §13.5/§13.6 format
 revisions, §13.7 ambiguous-tie error, §13.8 `when` predicate, §13.9

@@ -2,7 +2,7 @@
 
 Audience: a fresh Claude session (Opus 4.8) with no prior context.
 Read first: `CLAUDE.md` (repo root — landmines, coverage regime),
-`doc/architecture.md` §11.12 (deferred performance decisions) and
+`doc/en/architecture.md` §11.12 (deferred performance decisions) and
 §13 (implementation decisions). Do not start optimizing before
 Phase 2 numbers exist — §11.12 deliberately deferred all perf work
 until profiling demands it; that bar still applies.
@@ -144,7 +144,7 @@ mutation-based and order-sensitive within rounds.
 - `benchmark/RESULTS.md`: baseline vs final numbers per profile,
   plus the acquitted suspicions (explicitly note what was measured
   and NOT optimized, so the next session doesn't re-litigate).
-- Update `doc/architecture.md` §11.12 (resolved/refined) and the
+- Update `doc/en/architecture.md` §11.12 (resolved/refined) and the
   repo `CLAUDE.md` open-items list.
 - Decide with the user whether a coarse perf smoke test belongs in
   `test/` (very generous threshold, e.g. 10× baseline, to catch
