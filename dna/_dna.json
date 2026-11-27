@@ -10,5 +10,5 @@
   "layers": ["gg_json", "gg_tree", "dna_ggsuite", "gg_golden"]
 
   // "vars": { "dnaProjectName": "my-project" },
-  // "claude": { "claudeMdInclude": ["doc/conventions"] }
+  // "claude": { "claudeMdInclude": ["doc/en/conventions"] }
 }
